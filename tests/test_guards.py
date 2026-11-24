@@ -33,11 +33,11 @@ def test_allowed_hosts_and_origins(monkeypatch):
 
 
 def _app():
-    from arbdesk.guard import LocalOnly
+    from arbdesk.guard import Gate
     app = FastAPI()
-    app.add_middleware(LocalOnly)
+    app.add_middleware(Gate)
 
-    @app.post("/x")
+    @app.post("/api/x")
     async def x():
         return {"ok": True}
 
@@ -52,8 +52,8 @@ def _app():
 
 def test_middleware_blocks_foreign_origin_http_and_ws():
     c = TestClient(_app(), base_url="http://127.0.0.1:8780")
-    assert c.post("/x").status_code == 200
-    assert c.post("/x", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert c.post("/api/x").status_code == 200
+    assert c.post("/api/x", headers={"Origin": "https://evil.example"}).status_code == 403
     with c.websocket_connect("ws://127.0.0.1:8780/ws", headers={"Origin": "http://127.0.0.1:8780"}) as s:
         assert s.receive_text() == "hi"
     with pytest.raises(WebSocketDisconnect):

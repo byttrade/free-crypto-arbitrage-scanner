@@ -4,6 +4,7 @@ import { Book, Tape, Venue, price, type LegPick } from "./Dom";
 import { useI18n } from "./i18n";
 import { Diary } from "./Diary";
 import { Updates } from "./Updates";
+import { Logout } from "./Auth";
 import { Keys, type KeyRow } from "./Keys";
 import { Tabs } from "./Tabs";
 import type {
@@ -590,7 +591,8 @@ export function App() {
         if (watchRef.current.length) ws?.send(JSON.stringify({ type: "books", books: watchRef.current }));
         if (viewRef.current) ws?.send(viewRef.current);
       };
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
+        if (ev.code === 4401) return location.reload();  // вход истёк или сброшен: показать форму входа
         setWsOk(false);
         if (!stop) retry = window.setTimeout(open, 1000);
       };
@@ -1524,6 +1526,7 @@ export function App() {
         <span>{t("pairsLabel")} {researchText(research, t)}</span>
         <span>{t("spreadsLabel")} {spreads.length}</span>
         <Updates />
+        <Logout />
         <span className="risk">
           {t("riskText")}
         </span>

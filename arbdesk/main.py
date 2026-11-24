@@ -14,7 +14,8 @@ from . import alerts, research, settings, trade, vault
 from . import views as view
 from . import arb_exec, depth, diary, integrity, transfers, update
 from . import __version__
-from .guard import LocalOnly
+from . import auth
+from .guard import Gate, local_host
 from .market import (
     adapter_status,
     book_feed,
@@ -62,7 +63,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="BYTtrade Arb Terminal", lifespan=lifespan)
 # CORS не нужен: UI отдаётся с того же адреса. Чужие Origin и Host — 403.
-app.add_middleware(LocalOnly)
+app.add_middleware(Gate)
 
 
 async def broadcast(obj: dict) -> None:
@@ -158,6 +159,60 @@ async def post_update(req: Request):
         _updater.force = True
         _update_wake.set()
     return await get_update()
+
+
+def _secure(req: Request) -> bool:
+    return req.url.scheme == "https" or req.headers.get("x-forwarded-proto") == "https"
+
+
+def _with_cookie(req: Request, body: dict) -> JSONResponse:
+    resp = JSONResponse(body)
+    resp.set_cookie(auth.COOKIE, auth.make_cookie(), max_age=auth.TTL, httponly=True, samesite="strict",
+                    secure=_secure(req), path="/")
+    return resp
+
+
+@app.get("/api/auth/status")
+async def auth_status(req: Request):
+    acc = auth.account()
+    user = auth.session_user(req.cookies.get(auth.COOKIE))
+    local = not auth.public and local_host(req.headers.get("host", ""))
+    return {"account": bool(acc), "user": user, "authed": bool(user) or (not acc and local),
+            "public": auth.public, "setup": not acc and (local or auth.public), "needToken": auth.public and not acc}
+
+
+@app.post("/api/auth/setup")
+async def auth_setup(req: Request):
+    body = await req.json()
+    if not auth.setup_allowed(body.get("token"), local_host(req.headers.get("host", ""))):
+        raise HTTPException(403, "учётная запись уже есть или ссылка устарела — возьмите новую в терминале сервера")
+    if body.get("password") != body.get("password2"):
+        raise HTTPException(400, "пароли не совпадают")
+    try:
+        auth.save_account(str(body.get("user") or "").strip(), str(body.get("password") or ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return _with_cookie(req, {"ok": True})
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: Request):
+    ip = req.client.host if req.client else "?"
+    if wait := auth.throttled(ip):
+        raise HTTPException(429, f"слишком много попыток, подождите {wait} с")
+    body = await req.json()
+    if not auth.check_password(str(body.get("user") or "").strip(), str(body.get("password") or "")):
+        auth.failed(ip)
+        raise HTTPException(401, "неверный логин или пароль")
+    auth.succeeded(ip)
+    return _with_cookie(req, {"ok": True})
+
+
+@app.post("/api/auth/logout")
+async def auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
 
 
 @app.get("/api/settings")

@@ -1,19 +1,26 @@
-# BYTtrade Arb Terminal
+# ArbDesk by BYTtrade
 #
-# docker compose up -d --build
-# open http://127.0.0.1:8780
+#   docker compose up -d --build            # http://127.0.0.1:8780 — только на этом компьютере
+#
+# Доступ извне (свой сервер, домашний ПК): HTTPS и вход по логину и паролю
+#   ARBDESK_PUBLIC=1 ARBDESK_BIND=0.0.0.0 docker compose up -d --build
+#   docker compose logs terminal            # одноразовая ссылка для создания логина и пароля
+#   docker compose exec terminal arbdesk reset-password   # забыли пароль
 services:
   terminal:
     build: .
     ports:
-      - "127.0.0.1:8780:8780"
+      - "${ARBDESK_BIND:-127.0.0.1}:8780:8780"
     volumes:
       - terminal-data:/data
     restart: unless-stopped
     environment:
       PORT: "8780"
       DATA_DIR: /data
-      # Открываете панель не с 127.0.0.1/localhost (LAN-адрес, домен) — перечислите их здесь.
+      ARBDESK_PUBLIC: ${ARBDESK_PUBLIC:-}
+      # За своим HTTPS-прокси (nginx, Caddy, Cloudflare Tunnel): ARBDESK_TLS=off
+      ARBDESK_TLS: ${ARBDESK_TLS:-}
+      # Открываете панель без пароля не с 127.0.0.1/localhost (LAN-адрес, домен) — перечислите их здесь.
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
       # Прокси для биржи, если её режет провайдер: BLOFIN_PROXY=http://host:port
       BLOFIN_PROXY: ${BLOFIN_PROXY:-}

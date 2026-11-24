@@ -39,6 +39,7 @@
   <a href="#-trading-diary--pnl">Trading diary</a> ·
   <a href="#-screenshots">Screenshots</a> ·
   <a href="#-telegram-alerts">Telegram alerts</a> ·
+  <a href="#-access-from-anywhere">Remote access</a> ·
   <a href="#-auto-update">Auto-update</a> ·
   <a href="#-security">Security</a> ·
   <a href="README.ru.md">Русский</a>
@@ -68,7 +69,8 @@ git clone <this repo> arbdesk && cd arbdesk
 docker compose up -d --build
 ```
 
-Open **http://127.0.0.1:8780** — quotes appear in ~30 seconds, no API keys needed for scanning.
+Open **http://127.0.0.1:8780** — the first screen asks for a login and a password (or *Skip* to use it without a
+password on this computer). Quotes appear in ~30 seconds, no API keys needed for scanning.
 
 <details>
 <summary>Without Docker</summary>
@@ -76,7 +78,7 @@ Open **http://127.0.0.1:8780** — quotes appear in ~30 seconds, no API keys nee
 ```bash
 npm install && npm run build:web
 pip install .
-arbdesk            # http://127.0.0.1:8780
+arbdesk            # opens http://127.0.0.1:8780 in your browser
 ```
 
 UI development: `npm run dev:web` (Vite on :5173, API on :8780).
@@ -146,6 +148,34 @@ The diary is stored locally in `trades.json` on the `terminal-data` volume — n
 Default triggers (all configurable): spread ≥ **0.35%**, widening **+0.12% in 20 s**, funding ≥ **0.08%**,
 watchlist net ≥ **0.1%**, 24h volume ≥ **$500k**, **180 s** cooldown per pair, global rate limit per minute.
 
+## 🌍 Access from anywhere
+
+Run ArbDesk on a home computer or a VPS and open it from your phone or laptop — with a login and a password.
+
+```bash
+arbdesk --public
+```
+
+It listens on all addresses with HTTPS and prints a **one-time link**. Open it, enter a login, a password, repeat the
+password — done. Until the account exists the panel gives nothing away, and the account can only be created through
+that link.
+
+With Docker:
+
+```bash
+ARBDESK_PUBLIC=1 ARBDESK_BIND=0.0.0.0 docker compose up -d --build
+docker compose logs terminal          # the one-time link
+```
+
+- **HTTPS out of the box:** a certificate is generated on first start, the browser warns once (*Advanced → Proceed*).
+  Have your own domain and proxy (nginx, Caddy, Cloudflare Tunnel)? Add `--http` (Docker: `ARBDESK_TLS=off`).
+- **Sign-in** lasts 30 days per device; password guessing is slowed down after 5 wrong tries.
+  Passwords are stored as scrypt hashes, never in clear text.
+- **Forgot the password?** On the server: `arbdesk reset-password` (Docker:
+  `docker compose exec terminal arbdesk reset-password`). It asks for a new password, signs out every device and
+  works without a restart.
+- Prefer not to expose a port at all? Keep the default mode and reach the panel over Tailscale or an SSH tunnel.
+
 ## 🔄 Auto-update
 
 ArbDesk keeps itself and **[bytx](https://pypi.org/project/bytx/)** (the exchange SDK) up to date — on by default.
@@ -167,8 +197,9 @@ without a manual upgrade.
 
 ## 🔐 Security
 
-- The panel accepts requests only from `127.0.0.1` / `localhost`; add other hosts via `ALLOWED_HOSTS=host1,host2`.
-  Requests and sockets from foreign sites are rejected (403).
+- With a login and password the API and the socket open only after sign-in. Without one the panel accepts requests
+  only from `127.0.0.1` / `localhost` (add hosts via `ALLOWED_HOSTS=host1,host2`).
+  Requests and sockets from foreign sites are always rejected (403).
 - Exchange API keys are stored **encrypted** and unlocked with your secret; demo/testnet keys are supported.
 - Every action with a live key (except cancel) asks for confirmation. Opening a pair never retries an order blindly:
   on a timeout it looks the order up by client id.
