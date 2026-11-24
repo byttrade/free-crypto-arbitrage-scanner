@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320" role="img" aria-label="ArbDesk — crypto arbitrage terminal and trading journal">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#b0f542" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#b0f542" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#b0f542" stop-opacity="0"/>
+      <stop offset="1" stop-color="#b0f542" stop-opacity=".55"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f14"/>
+      <stop offset="1" stop-color="#101826"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .t { font-family: -apple-system, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+    .m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .sweep { transform-origin: 170px 160px; animation: spin 3.2s linear infinite; }
+    .blip { opacity: 0; animation: blip 3.2s ease-out infinite; }
+    .b2 { animation-delay: .9s; } .b3 { animation-delay: 1.7s; } .b4 { animation-delay: 2.4s; }
+    .row { opacity: 0; animation: row 9s ease-in-out infinite; }
+    .r2 { animation-delay: 3s; } .r3 { animation-delay: 6s; }
+    .live { animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes blip { 0% { opacity: 0; } 8% { opacity: 1; } 60% { opacity: .15; } 100% { opacity: 0; } }
+    @keyframes row { 0%, 4% { opacity: 0; transform: translateY(8px); } 10%, 30% { opacity: 1; transform: none; } 36%, 100% { opacity: 0; } }
+    @keyframes pulse { 50% { opacity: .35; } }
+    @media (prefers-reduced-motion: reduce) { .sweep, .blip, .row, .live { animation: none; opacity: 1; } .r2, .r3 { opacity: 0; } }
+  </style>
+  <rect width="1200" height="320" rx="18" fill="url(#bg)"/>
+
+  <!-- радар -->
+  <circle cx="170" cy="160" r="128" fill="url(#glow)"/>
+  <g fill="none" stroke="#b0f542" stroke-opacity=".22">
+    <circle cx="170" cy="160" r="120"/><circle cx="170" cy="160" r="80"/><circle cx="170" cy="160" r="40"/>
+    <path d="M50 160h240M170 40v240"/>
+  </g>
+  <path class="sweep" d="M170 160 L290 160 A120 120 0 0 0 274 100 Z" fill="url(#sweep)"/>
+  <circle class="blip" cx="232" cy="118" r="6" fill="#17c964"/>
+  <circle class="blip b2" cx="120" cy="96" r="5" fill="#b0f542"/>
+  <circle class="blip b3" cx="96" cy="210" r="6" fill="#17c964"/>
+  <circle class="blip b4" cx="226" cy="232" r="4" fill="#f31260"/>
+  <circle cx="170" cy="160" r="4" fill="#b0f542"/>
+
+  <!-- название -->
+  <text x="340" y="118" class="t" font-size="64" font-weight="800" fill="#ffffff">Arb<tspan fill="#b0f542">Desk</tspan></text>
+  <text x="342" y="158" class="t" font-size="22" fill="#9aa7b4">Crypto arbitrage terminal &amp; trading journal</text>
+  <text x="342" y="190" class="t" font-size="17" fill="#6f7d8b">11 exchanges · spreads · funding · pair trading · PnL diary &amp; reports</text>
+
+  <!-- живая лента -->
+  <g transform="translate(342 214)">
+    <rect width="800" height="64" rx="12" fill="#0e141b" stroke="#1f2a36"/>
+    <circle class="live" cx="24" cy="32" r="6" fill="#17c964"/>
+    <text x="40" y="38" class="m" font-size="15" fill="#17c964">LIVE</text>
+    <g class="row"><text x="96" y="38" class="m" font-size="19" fill="#dfe6ee">ETH/USDT perp   Bybit → OKX     <tspan fill="#b0f542">+0.31%</tspan>  <tspan fill="#6f7d8b">net +0.12% · funding +0.01%</tspan></text></g>
+    <g class="row r2"><text x="96" y="38" class="m" font-size="19" fill="#dfe6ee">SOL/USDT perp   KuCoin → Gate   <tspan fill="#b0f542">+0.42%</tspan>  <tspan fill="#6f7d8b">net +0.18% · lives 6m</tspan></text></g>
+    <g class="row r3"><text x="96" y="38" class="m" font-size="19" fill="#dfe6ee">ZK/USDT spot    Binance → HTX   <tspan fill="#f31260">12.7% ⛔</tspan> <tspan fill="#6f7d8b">withdrawals closed</tspan></text></g>
+  </g>
+</svg>

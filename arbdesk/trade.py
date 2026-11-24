@@ -1,0 +1,274 @@
+"""Лимитки, правка и позиции по приватному сокету bytx.
+
+Браузер шлёт команды в тот же /ws. На биржу уходят ws_place_order / ws_amend_order /
+ws_cancel_order. Открытые ордера и позиции читает приватный поток (order_tracker,
+position_tracker): один REST-снимок при подключении, дальше только сокет.
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+from bytx import create_exchange, errors
+
+from . import integrity, vault
+from .market import proxy_for
+
+_lock = asyncio.Lock()
+_sessions: dict[tuple[str, str], "Session"] = {}
+
+
+class Session:
+    def __init__(self, row: dict, kind: str, ex, orders, positions) -> None:
+        self.key_id = row["id"]
+        self.venue = row["venue"]
+        self.demo = bool(row["demo"])
+        self.kind = kind
+        self.ex = ex
+        self.orders = orders
+        self.positions = positions
+        self.guard = None  # integrity.Guard, created on the first order
+
+
+def kick() -> None:
+    asyncio.create_task(sync())
+
+
+async def shutdown() -> None:
+    async with _lock:
+        for key in list(_sessions):
+            await _stop(_sessions.pop(key))
+
+
+async def sync() -> None:
+    async with _lock:
+        opened = vault.opened()
+        wanted = {(row["id"], kind) for row in opened for kind in ("perp", "spot")}
+        for key in list(_sessions):
+            if key not in wanted:
+                await _stop(_sessions.pop(key))
+        for row in opened:
+            for kind in ("perp", "spot"):
+                if (row["id"], kind) not in _sessions:
+                    await _start(row, kind)
+
+
+async def _start(row: dict, kind: str) -> None:
+    market = "spot" if kind == "spot" else "swap"
+    try:
+        ex = create_exchange(
+            row["venue"],
+            api_key=row["apiKey"],
+            secret=row["secret"],
+            password=row["password"] or None,
+            demo=bool(row["demo"]),
+            market=market,
+            # Перпы OKX и Bitget без явного режима маржи ордер не принимают.
+            margin_mode="cross" if kind == "perp" else None,
+            proxy=proxy_for(row["venue"]),
+            timeout=20,
+            retries=0,
+        )
+        await ex.connect()
+    except Exception as exc:
+        print("trade connect", row["venue"], kind, type(exc).__name__, str(exc)[:160], flush=True)
+        return
+    orders = ex.order_tracker()
+    positions = ex.position_tracker() if kind == "perp" else None
+    session = Session(row, kind, ex, orders, positions)
+    _sessions[(row["id"], kind)] = session
+    try:
+        orders.on_update(lambda _order: asyncio.create_task(push_orders(session)))
+        await orders.start()
+        if positions is not None:
+            positions.on_update(lambda _pos: asyncio.create_task(push_positions(session)))
+            await positions.start()
+        await push_orders(session)
+        await push_positions(session)
+    except Exception as exc:
+        _sessions.pop((row["id"], kind), None)
+        await _stop(session)
+        print("trade watch", row["venue"], kind, type(exc).__name__, str(exc)[:160], flush=True)
+
+
+async def _stop(session: Session) -> None:
+    for tracker in (session.positions, session.orders):
+        if tracker is None:
+            continue
+        try:
+            await tracker.stop()
+        except Exception:
+            pass
+    try:
+        await session.ex.close()
+    except Exception:
+        pass
+
+
+def _find(venue: str, kind: str, key_id: str = "") -> tuple[Session | None, str]:
+    if key_id:
+        hit = _sessions.get((key_id, kind))
+        if hit is None or hit.venue != venue:
+            return None, "ключ ещё подключается или закрыт"
+        return hit, ""
+    hits = [s for s in list(_sessions.values()) if s.venue == venue and s.kind == kind]
+    if not hits:
+        return None, "ключ ещё подключается или закрыт"
+    if len(hits) > 1:
+        return None, "на бирже несколько открытых ключей — выберите ключ"
+    return hits[0], ""
+
+
+def _order_row(session: Session, order) -> dict:
+    return {
+        "id": order.id,
+        "keyId": session.key_id,
+        "venue": session.venue,
+        "kind": session.kind,
+        "demo": session.demo,
+        "symbol": order.symbol,
+        "side": order.side,
+        "price": order.price,
+        "size": order.size,
+        "filled": order.filled,
+        "status": order.status,
+    }
+
+
+def _pos_row(session: Session, pos) -> dict:
+    return {
+        "keyId": session.key_id,
+        "venue": session.venue,
+        "kind": session.kind,
+        "demo": session.demo,
+        "symbol": pos.symbol,
+        "side": pos.side,
+        "size": pos.size,
+        "entry": pos.entry_price,
+        "pnl": pos.unrealized_pnl,
+        "leverage": pos.leverage,
+    }
+
+
+def _remember(session: Session, order) -> None:
+    try:
+        session.orders.track(order)
+    except Exception:
+        pass
+
+
+async def push_orders(session: Session) -> None:
+    from .main import broadcast
+
+    rows = [_order_row(session, order) for order in session.orders.open_orders]
+    await broadcast({"type": "orders", "keyId": session.key_id, "venue": session.venue, "kind": session.kind, "rows": rows})
+
+
+async def push_positions(session: Session) -> None:
+    from .main import broadcast
+
+    rows = []
+    if session.positions is not None:
+        rows = [_pos_row(session, pos) for pos in session.positions.positions if pos.size]
+    await broadcast({"type": "positions", "keyId": session.key_id, "venue": session.venue, "kind": session.kind, "rows": rows})
+
+
+async def _ack(socket, ok: bool, text: str) -> None:
+    import json
+
+    try:
+        await socket.send_text(json.dumps({"type": "order_ack", "ok": ok, "text": text}))
+    except Exception:
+        pass
+
+
+def _num(value) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+async def handle(socket, msg: dict) -> None:
+    action = msg.get("type")
+    kind = msg.get("kind") if msg.get("kind") in ("perp", "spot") else "perp"
+    session = None
+    try:
+        session, err = _find(str(msg.get("venue") or ""), kind, str(msg.get("keyId") or ""))
+        if session is None:
+            await _ack(socket, False, err)
+            return
+        # Боевой ключ: всё, кроме отмены, только с подтверждением из UI.
+        if not session.demo and action != "cancel" and msg.get("confirmLive") is not True:
+            await _ack(socket, False, "live-ключ: нужно подтверждение")
+            return
+        if action in ("place", "amend"):  # отмена и закрытие позиции доступны всегда
+            why = await integrity.gate(session)
+            if why:
+                await _ack(socket, False, why)
+                return
+        symbol = str(msg.get("symbol") or "")
+        ex = session.ex
+        if action == "place":
+            side = msg.get("side")
+            price = _num(msg.get("price")) or 0
+            notional = _num(msg.get("notional")) or 0
+            if side not in ("buy", "sell") or price <= 0 or notional <= 0:
+                await _ack(socket, False, "нужны сторона, цена и сумма")
+                return
+            order = await ex.ws_place_order(symbol, side, notional=notional, price=price, type="limit")
+            integrity.after_order(session, order)
+            _remember(session, order)
+            mark = "demo" if session.demo else "live"
+            await _ack(socket, True, f"{mark}: {order.side} {order.symbol} @ {order.price}")
+        elif action == "amend":
+            order = await ex.ws_amend_order(
+                symbol,
+                str(msg.get("orderId") or ""),
+                price=_num(msg.get("price")),
+                size=_num(msg.get("size")),
+                side=msg.get("side") if msg.get("side") in ("buy", "sell") else None,
+            )
+            _remember(session, order)
+            await _ack(socket, True, "лимитка изменена")
+        elif action == "cancel":
+            order = await ex.ws_cancel_order(symbol, str(msg.get("orderId") or ""))
+            _remember(session, order)
+            await _ack(socket, True, "лимитка снята")
+        elif action == "close":
+            if session.positions is None:
+                await _ack(socket, False, "позиции только на перпах")
+                return
+            pos = session.positions.get(symbol, msg.get("side") or None)
+            if pos is None or not pos.size:
+                await _ack(socket, False, "позиции нет")
+                return
+            side = "sell" if pos.side == "long" else "buy"
+            if pos.contracts:
+                order = await ex.ws_place_order(symbol, side, contracts=pos.contracts, reduce_only=True)
+            else:
+                order = await ex.ws_place_order(symbol, side, size=pos.size, reduce_only=True)
+            _remember(session, order)
+            await _ack(socket, True, "закрытие отправлено")
+        else:
+            return
+        await push_orders(session)
+        await push_positions(session)
+    except errors.OrderStatusUnknown as exc:
+        # Ордер мог дойти: не повторяем, сверяем по client_id через трекер.
+        cid = getattr(exc, "client_order_id", None) or "—"
+        await _ack(socket, False, f"статус ордера неизвестен (client_id {cid}), сверяю с биржей — не повторяйте")
+        if session is not None:
+            asyncio.create_task(_reconcile(session))
+    except Exception as exc:
+        await _ack(socket, False, str(exc).split("\n")[0][:180])
+
+
+async def _reconcile(session: Session) -> None:
+    try:
+        await session.orders.resync()
+        if session.positions is not None:
+            await session.positions.resync()
+    except Exception:
+        pass
+    await push_orders(session)
+    await push_positions(session)

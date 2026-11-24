@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "free-crypto-arbitrage-scanner"
+dynamic = ["version"]
+description = "ArbDesk: free crypto arbitrage scanner, terminal and trading journal for 11 exchanges (spreads, funding rates, pair trading, order books, PnL diary, Telegram alerts)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "BYTtrade" }]
+keywords = ["crypto", "arbitrage", "arbitrage-scanner", "crypto-arbitrage", "funding-rate", "pair-trading",
+            "trading-journal", "pnl", "binance", "bybit", "okx", "order-book", "trading-terminal"]
+# bytx: <0.3 — несовместимый bytx сначала проверяется и выпускается новой версией панели.
+dependencies = [
+    "bytx[ws]>=0.2.6,<0.3",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "aiohttp>=3.9",
+    "cryptography>=43",
+]
+
+[project.scripts]
+arbdesk = "arbdesk.__main__:main"
+
+[tool.setuptools]
+packages = ["arbdesk"]
+
+[tool.setuptools.dynamic]
+version = { attr = "arbdesk.__version__" }
+
+[tool.setuptools.package-data]
+arbdesk = ["web/*", "web/**/*"]

@@ -1,0 +1,15 @@
+node_modules
+dist
+web/dist
+data
+.git
+.env
+*.md
+.idea
+.vscode
+docs
+tests
+!README.md
+arbdesk/web
+build
+*.egg-info
