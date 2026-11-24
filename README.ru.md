@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/banner.svg" alt="ArbDesk — бесплатный терминал криптоарбитража и дневник трейдера" width="100%">
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/banner.svg" alt="ArbDesk — бесплатный терминал криптоарбитража и дневник трейдера" width="100%">
 </p>
 
 <h1 align="center">ArbDesk — бесплатный терминал криптоарбитража и дневник трейдера</h1>
@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/free-crypto-arbitrage-scanner/"><img alt="PyPI" src="https://img.shields.io/pypi/v/free-crypto-arbitrage-scanner?style=flat-square&color=b0f542"></a>
   <img alt="биржи" src="https://img.shields.io/badge/бирж-11-b0f542?style=flat-square">
   <img alt="рынки" src="https://img.shields.io/badge/рынки-спот%20%2B%20перп-17c964?style=flat-square">
   <img alt="данные" src="https://img.shields.io/badge/данные-WebSocket-1e90ff?style=flat-square">
@@ -18,17 +19,17 @@
 </p>
 
 <p align="center">
-  <img src="web/public/logos/binance.svg" height="26" alt="Binance">&nbsp;
-  <img src="web/public/logos/bybit.svg" height="26" alt="Bybit">&nbsp;
-  <img src="web/public/logos/okx.svg" height="26" alt="OKX">&nbsp;
-  <img src="web/public/logos/bitget.svg" height="26" alt="Bitget">&nbsp;
-  <img src="web/public/logos/kucoin.svg" height="26" alt="KuCoin">&nbsp;
-  <img src="web/public/logos/gate.svg" height="26" alt="Gate">&nbsp;
-  <img src="web/public/logos/mexc.svg" height="26" alt="MEXC">&nbsp;
-  <img src="web/public/logos/htx.svg" height="26" alt="HTX">&nbsp;
-  <img src="web/public/logos/bingx.svg" height="26" alt="BingX">&nbsp;
-  <img src="web/public/logos/hyperliquid.svg" height="26" alt="Hyperliquid">&nbsp;
-  <img src="web/public/logos/blofin.svg" height="26" alt="BloFin">
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/binance.svg" height="26" alt="Binance">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/bybit.svg" height="26" alt="Bybit">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/okx.svg" height="26" alt="OKX">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/bitget.svg" height="26" alt="Bitget">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/kucoin.svg" height="26" alt="KuCoin">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/gate.svg" height="26" alt="Gate">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/mexc.svg" height="26" alt="MEXC">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/htx.svg" height="26" alt="HTX">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/bingx.svg" height="26" alt="BingX">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/hyperliquid.svg" height="26" alt="Hyperliquid">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/blofin.svg" height="26" alt="BloFin">
 </p>
 
 <p align="center">
@@ -40,13 +41,13 @@
   <a href="#-доступ-извне">Доступ извне</a> ·
   <a href="#-автообновление">Автообновление</a> ·
   <a href="#-безопасность">Безопасность</a> ·
-  <a href="README.md">English</a>
+  <a href="https://github.com/byttrade/free-crypto-arbitrage-scanner/blob/main/README.md">English</a>
 </p>
 
 ---
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="Таблица арбитражных спредов, стаканы и лента сделок в реальном времени" width="100%">
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/demo.gif" alt="Таблица арбитражных спредов, стаканы и лента сделок в реальном времени" width="100%">
 </p>
 
 ## Чем отличается
@@ -63,20 +64,32 @@
 ## ⚡ Запуск
 
 ```bash
-git clone <этот репозиторий> arbdesk && cd arbdesk
+pip install free-crypto-arbitrage-scanner
+arbdesk
+```
+
+Браузер сам откроет **http://127.0.0.1:8780** — первым экраном панель попросит логин и пароль (или *Пропустить* —
+тогда без пароля и только на этом компьютере). Котировки появятся примерно через 30 секунд; для сканера ключи не
+нужны. Python 3.11+.
+
+<details>
+<summary>Docker</summary>
+
+```bash
+git clone https://github.com/byttrade/free-crypto-arbitrage-scanner.git && cd free-crypto-arbitrage-scanner
 docker compose up -d --build
 ```
 
-Откройте **http://127.0.0.1:8780** — первым экраном панель попросит логин и пароль (или *Пропустить* — тогда без
-пароля и только на этом компьютере). Котировки появятся примерно через 30 секунд; для сканера ключи не нужны.
+Затем откройте http://127.0.0.1:8780.
+</details>
 
 <details>
-<summary>Без Docker</summary>
+<summary>Из исходников</summary>
 
 ```bash
 npm install && npm run build:web
 pip install .
-arbdesk            # сам откроет http://127.0.0.1:8780 в браузере
+arbdesk
 ```
 
 Разработка интерфейса: `npm run dev:web` (Vite на :5173, API на :8780).
@@ -103,7 +116,7 @@ arbdesk            # сам откроет http://127.0.0.1:8780 в браузе
 
 Не только спред. Ведите **все** сделки в одном месте — скальпинг, свинг, тренд, сетка, фандинг — и смотрите, откуда приходят деньги.
 
-<p align="center"><img src="docs/media/diary.gif" alt="Дневник трейдера с PnL, кривой капитала и инфографикой" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/diary.gif" alt="Дневник трейдера с PnL, кривой капитала и инфографикой" width="100%"></p>
 
 - ✍️ **Ручной ввод** — лонг/шорт, спот/перп/маржа, комиссии, фандинг, плечо, стратегия, теги и заметка; PnL считается прямо при вводе. Открытые позиции оцениваются по живой цене.
 - 📥 **Импорт прошлых сделок из CSV** — выгрузки Binance, Bybit, OKX и других узнаются по названиям колонок (RU/EN, `,` `;` или табуляция, десятичная запятая); дубли пропускаются. Шаблон — в один клик.
@@ -114,27 +127,27 @@ arbdesk            # сам откроет http://127.0.0.1:8780 в браузе
 
 Дневник хранится локально в `trades.json` на томе `terminal-data` — никуда не отправляется.
 
-<p align="center"><img src="docs/media/diary.png" alt="Показатели дневника трейдера: PnL, win rate, profit factor, просадка" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/diary.png" alt="Показатели дневника трейдера: PnL, win rate, profit factor, просадка" width="100%"></p>
 <p align="center"><sub>На скриншотах пример данных.</sub></p>
 
 ## 🖼 Скриншоты
 
 **Поиск монеты → цены на всех биржах → стаканы обеих ног**
 
-<p align="center"><img src="docs/media/search.gif" alt="Поиск монеты и сравнение цен на всех криптобиржах" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/search.gif" alt="Поиск монеты и сравнение цен на всех криптобиржах" width="100%"></p>
 
 **Спред, net после комиссий, спред на $1K, время жизни и ближайшая выплата фандинга**
 
-<p align="center"><img src="docs/media/books.png" alt="Арбитражный спред со стаканами, графиками и открытием связки" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/books.png" alt="Арбитражный спред со стаканами, графиками и открытием связки" width="100%"></p>
 
 <table>
   <tr>
-    <td width="50%"><b>Фандинг и базис</b><br><img src="docs/media/funding.png" alt="Сканер арбитража фандинга"></td>
-    <td width="50%"><b>Пары: коинтеграция и z-score</b><br><img src="docs/media/pairs.png" alt="Сканер парного трейдинга"></td>
+    <td width="50%"><b>Фандинг и базис</b><br><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/funding.png" alt="Сканер арбитража фандинга"></td>
+    <td width="50%"><b>Пары: коинтеграция и z-score</b><br><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/pairs.png" alt="Сканер парного трейдинга"></td>
   </tr>
 </table>
 
-<p align="center"><img src="docs/media/mobile.png" alt="Терминал криптоарбитража на телефоне" width="300"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/mobile.png" alt="Терминал криптоарбитража на телефоне" width="300"></p>
 
 ## 🔔 Алерты в Telegram
 
@@ -148,7 +161,19 @@ net избранного от **0,1%**, объём за 24ч от **$500k**, а�
 
 ## 🌍 Доступ извне
 
-Запустите ArbDesk на домашнем компьютере или VPS и открывайте с телефона или ноутбука — по логину и паролю.
+Запустите ArbDesk на домашнем компьютере или VPS и открывайте с телефона или ноутбука.
+
+**Безопаснее всего — не открывать панель в сеть, а пробросить порт по SSH.** Оставьте на сервере обычный режим
+(он слушает только `127.0.0.1`) и выполните на своём компьютере:
+
+```bash
+ssh -N -L 8780:127.0.0.1:8780 user@ваш-сервер
+```
+
+Затем откройте http://127.0.0.1:8780 у себя. Из интернета панель не видна, трафик шифрует SSH. Так же работают
+Tailscale и WireGuard.
+
+**Открыть в сеть, с логином и паролем:**
 
 ```bash
 arbdesk --public
@@ -171,7 +196,9 @@ docker compose logs terminal          # одноразовая ссылка
 - **Забыли пароль?** На сервере: `arbdesk reset-password` (Docker:
   `docker compose exec terminal arbdesk reset-password`). Спросит новый пароль, выйдет со всех устройств, перезапуск
   не нужен.
-- Не хотите открывать порт вовсе? Оставьте обычный режим и заходите через Tailscale или SSH-туннель.
+
+Доступны все варианты — только локально, SSH-туннель или VPN, открыто с паролем, за своим прокси. Вариант выбираете
+вы, и все риски выбранной схемы (открытые порты, слабые пароли, безопасность сервера) — исключительно на вас.
 
 ## 🔄 Автообновление
 
@@ -227,4 +254,4 @@ ArbDesk сам обновляет себя и **[bytx](https://pypi.org/project/
 
 ---
 
-<p align="center">Сделано в <b>BYTtrade</b> · source-available, см. <a href="LICENSE">LICENSE</a></p>
+<p align="center">Сделано в <a href="https://byttrade.com/?utm_source=github&utm_medium=free_tool&utm_campaign=free-crypto-arbitrage-scanner&utm_content=readme_ru"><b>BYTtrade</b></a> · source-available, см. <a href="https://github.com/byttrade/free-crypto-arbitrage-scanner/blob/main/LICENSE">LICENSE</a></p>

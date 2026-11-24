@@ -1,0 +1,25 @@
+Free Crypto Arbitrage Scanner by BYTtrade (ArbDesk)
+Copyright (c) 2026 BYTtrade (https://byttrade.com). All rights reserved.
+Licensed under the BYTtrade Source-Available License 1.3 (ArbDesk edition), see LICENSE.
+
+Third-party software
+--------------------
+
+Python packages, installed separately and not covered by the license of this software:
+
+- bytx, https://github.com/byttrade/bytx (BYTtrade Source-Available License,
+  see the LICENSE and NOTICE files shipped with bytx)
+- FastAPI, https://github.com/fastapi/fastapi (MIT License)
+- Uvicorn, https://github.com/encode/uvicorn (BSD 3-Clause License)
+- aiohttp, https://github.com/aio-libs/aiohttp (Apache License 2.0)
+- cryptography, https://github.com/pyca/cryptography (Apache License 2.0 or BSD 3-Clause License)
+
+Included in the built web interface (arbdesk/web), each under its own license:
+
+- React and React DOM, https://github.com/facebook/react (MIT License)
+- TradingView Lightweight Charts, https://github.com/tradingview/lightweight-charts
+  (Apache License 2.0). Copyright (c) 2025 TradingView, Inc. The charts show the
+  TradingView attribution logo, which links to https://www.tradingview.com/.
+
+Market data shown by the software comes from the public APIs of the exchanges and is
+subject to their terms; it is not part of this software.

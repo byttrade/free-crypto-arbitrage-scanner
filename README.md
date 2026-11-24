@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/banner.svg" alt="ArbDesk — free crypto arbitrage terminal and trading journal" width="100%">
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/banner.svg" alt="ArbDesk — free crypto arbitrage terminal and trading journal" width="100%">
 </p>
 
 <h1 align="center">ArbDesk — Free Crypto Arbitrage Terminal &amp; Trading Journal</h1>
@@ -10,27 +10,28 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/free-crypto-arbitrage-scanner/"><img alt="PyPI" src="https://img.shields.io/pypi/v/free-crypto-arbitrage-scanner?style=flat-square&color=b0f542"></a>
   <img alt="exchanges" src="https://img.shields.io/badge/exchanges-11-b0f542?style=flat-square">
   <img alt="markets" src="https://img.shields.io/badge/markets-spot%20%2B%20perp-17c964?style=flat-square">
   <img alt="realtime" src="https://img.shields.io/badge/data-WebSocket%20realtime-1e90ff?style=flat-square">
   <img alt="docker" src="https://img.shields.io/badge/run-docker%20compose-2496ed?style=flat-square&logo=docker&logoColor=white">
-  <img alt="python" src="https://img.shields.io/badge/python-3.12-3776ab?style=flat-square&logo=python&logoColor=white">
+  <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-3776ab?style=flat-square&logo=python&logoColor=white">
   <img alt="react" src="https://img.shields.io/badge/react-19-61dafb?style=flat-square&logo=react&logoColor=black">
   <img alt="languages" src="https://img.shields.io/badge/UI-EN%20%7C%20RU-555?style=flat-square">
 </p>
 
 <p align="center">
-  <img src="web/public/logos/binance.svg" height="26" alt="Binance">&nbsp;
-  <img src="web/public/logos/bybit.svg" height="26" alt="Bybit">&nbsp;
-  <img src="web/public/logos/okx.svg" height="26" alt="OKX">&nbsp;
-  <img src="web/public/logos/bitget.svg" height="26" alt="Bitget">&nbsp;
-  <img src="web/public/logos/kucoin.svg" height="26" alt="KuCoin">&nbsp;
-  <img src="web/public/logos/gate.svg" height="26" alt="Gate">&nbsp;
-  <img src="web/public/logos/mexc.svg" height="26" alt="MEXC">&nbsp;
-  <img src="web/public/logos/htx.svg" height="26" alt="HTX">&nbsp;
-  <img src="web/public/logos/bingx.svg" height="26" alt="BingX">&nbsp;
-  <img src="web/public/logos/hyperliquid.svg" height="26" alt="Hyperliquid">&nbsp;
-  <img src="web/public/logos/blofin.svg" height="26" alt="BloFin">
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/binance.svg" height="26" alt="Binance">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/bybit.svg" height="26" alt="Bybit">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/okx.svg" height="26" alt="OKX">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/bitget.svg" height="26" alt="Bitget">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/kucoin.svg" height="26" alt="KuCoin">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/gate.svg" height="26" alt="Gate">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/mexc.svg" height="26" alt="MEXC">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/htx.svg" height="26" alt="HTX">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/bingx.svg" height="26" alt="BingX">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/hyperliquid.svg" height="26" alt="Hyperliquid">&nbsp;
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/web/public/logos/blofin.svg" height="26" alt="BloFin">
 </p>
 
 <p align="center">
@@ -42,13 +43,13 @@
   <a href="#-access-from-anywhere">Remote access</a> ·
   <a href="#-auto-update">Auto-update</a> ·
   <a href="#-security">Security</a> ·
-  <a href="README.ru.md">Русский</a>
+  <a href="https://github.com/byttrade/free-crypto-arbitrage-scanner/blob/main/README.ru.md">Русский</a>
 </p>
 
 ---
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="Live crypto arbitrage spreads table with order books and trade tape" width="100%">
+  <img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/demo.gif" alt="Live crypto arbitrage spreads table with order books and trade tape" width="100%">
 </p>
 
 ## Why ArbDesk
@@ -65,20 +66,32 @@ closed, or fees eat everything. ArbDesk shows the **honest number**:
 ## ⚡ Quick start
 
 ```bash
-git clone <this repo> arbdesk && cd arbdesk
+pip install free-crypto-arbitrage-scanner
+arbdesk
+```
+
+The browser opens **http://127.0.0.1:8780** by itself — the first screen asks for a login and a password (or *Skip*
+to use it without a password on this computer). Quotes appear in ~30 seconds, no API keys needed for scanning.
+Python 3.11+.
+
+<details>
+<summary>Docker</summary>
+
+```bash
+git clone https://github.com/byttrade/free-crypto-arbitrage-scanner.git && cd free-crypto-arbitrage-scanner
 docker compose up -d --build
 ```
 
-Open **http://127.0.0.1:8780** — the first screen asks for a login and a password (or *Skip* to use it without a
-password on this computer). Quotes appear in ~30 seconds, no API keys needed for scanning.
+Then open http://127.0.0.1:8780.
+</details>
 
 <details>
-<summary>Without Docker</summary>
+<summary>From source</summary>
 
 ```bash
 npm install && npm run build:web
 pip install .
-arbdesk            # opens http://127.0.0.1:8780 in your browser
+arbdesk
 ```
 
 UI development: `npm run dev:web` (Vite on :5173, API on :8780).
@@ -105,7 +118,7 @@ UI development: `npm run dev:web` (Vite on :5173, API on :8780).
 
 Not only spreads. Keep **all** your trades in one place — scalps, swings, trend, grid, funding — and see where the money comes from.
 
-<p align="center"><img src="docs/media/diary.gif" alt="Crypto trading journal with PnL, equity curve and infographics" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/diary.gif" alt="Crypto trading journal with PnL, equity curve and infographics" width="100%"></p>
 
 - ✍️ **Add trades by hand** — long/short, spot/perp/margin, fees, funding, leverage, strategy, tags and notes; PnL is calculated as you type. Open positions are marked to the live price.
 - 📥 **Import past trades from CSV** — exports of Binance, Bybit, OKX and others are recognized by column names (EN/RU, `,` `;` or tab, decimal comma); duplicates are skipped. A template is one click away.
@@ -116,27 +129,27 @@ Not only spreads. Keep **all** your trades in one place — scalps, swings, tren
 
 The diary is stored locally in `trades.json` on the `terminal-data` volume — nothing is sent anywhere.
 
-<p align="center"><img src="docs/media/diary.png" alt="Trading diary KPIs: net PnL, win rate, profit factor, drawdown" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/diary.png" alt="Trading diary KPIs: net PnL, win rate, profit factor, drawdown" width="100%"></p>
 <p align="center"><sub>Screenshots show sample data.</sub></p>
 
 ## 🖼 Screenshots
 
 **Search a coin → see it on every exchange → order books of both legs**
 
-<p align="center"><img src="docs/media/search.gif" alt="Search a coin and compare prices on all crypto exchanges" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/search.gif" alt="Search a coin and compare prices on all crypto exchanges" width="100%"></p>
 
 **Spread, net after fees, spread on $1K, lifetime and next funding payout**
 
-<p align="center"><img src="docs/media/books.png" alt="Arbitrage spread with order books, charts and one-click pair execution" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/books.png" alt="Arbitrage spread with order books, charts and one-click pair execution" width="100%"></p>
 
 <table>
   <tr>
-    <td width="50%"><b>Funding rates &amp; basis</b><br><img src="docs/media/funding.png" alt="Funding rate arbitrage scanner"></td>
-    <td width="50%"><b>Pair trading: cointegration &amp; z-score</b><br><img src="docs/media/pairs.png" alt="Crypto pair trading cointegration scanner"></td>
+    <td width="50%"><b>Funding rates &amp; basis</b><br><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/funding.png" alt="Funding rate arbitrage scanner"></td>
+    <td width="50%"><b>Pair trading: cointegration &amp; z-score</b><br><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/pairs.png" alt="Crypto pair trading cointegration scanner"></td>
   </tr>
 </table>
 
-<p align="center"><img src="docs/media/mobile.png" alt="Crypto arbitrage terminal on mobile" width="300"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/mobile.png" alt="Crypto arbitrage terminal on mobile" width="300"></p>
 
 ## 🔔 Telegram alerts
 
@@ -150,7 +163,19 @@ watchlist net ≥ **0.1%**, 24h volume ≥ **$500k**, **180 s** cooldown per pai
 
 ## 🌍 Access from anywhere
 
-Run ArbDesk on a home computer or a VPS and open it from your phone or laptop — with a login and a password.
+Run ArbDesk on a home computer or a VPS and open it from your phone or laptop.
+
+**Safest: keep the panel closed to the network and forward the port over SSH.** Leave the default mode on the server
+(it listens on `127.0.0.1` only) and run on your own computer:
+
+```bash
+ssh -N -L 8780:127.0.0.1:8780 user@your-server
+```
+
+Then open http://127.0.0.1:8780 on your computer. Nothing is reachable from the internet and the traffic is encrypted
+by SSH. Tailscale or WireGuard work the same way.
+
+**Open to the network, with a login and a password:**
 
 ```bash
 arbdesk --public
@@ -174,7 +199,9 @@ docker compose logs terminal          # the one-time link
 - **Forgot the password?** On the server: `arbdesk reset-password` (Docker:
   `docker compose exec terminal arbdesk reset-password`). It asks for a new password, signs out every device and
   works without a restart.
-- Prefer not to expose a port at all? Keep the default mode and reach the panel over Tailscale or an SSH tunnel.
+
+All options are available — local only, SSH tunnel or VPN, public with a password, behind your own proxy. You choose
+the setup, and the risks of the chosen setup (open ports, weak passwords, server security) are entirely yours.
 
 ## 🔄 Auto-update
 
@@ -231,4 +258,4 @@ trade log, Binance Bybit OKX arbitrage, order book, open source, self-hosted.</s
 
 ---
 
-<p align="center">Made by <b>BYTtrade</b> · source-available, see <a href="LICENSE">LICENSE</a></p>
+<p align="center">Made by <a href="https://byttrade.com/?utm_source=github&utm_medium=free_tool&utm_campaign=free-crypto-arbitrage-scanner&utm_content=readme_en"><b>BYTtrade</b></a> · source-available, see <a href="https://github.com/byttrade/free-crypto-arbitrage-scanner/blob/main/LICENSE">LICENSE</a></p>
