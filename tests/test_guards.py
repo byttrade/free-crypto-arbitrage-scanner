@@ -607,3 +607,24 @@ def test_new_tab_gets_positions_snapshot(monkeypatch):
     monkeypatch.setattr(trade, "_sessions", {("k", "perp"): s})
     msgs = trade.snapshot()
     assert [m["type"] for m in msgs] == ["orders", "positions"] and msgs[1]["rows"][0]["size"] == 2.0
+
+
+def test_close_and_market_resync_position(monkeypatch):
+    # Биржа может долго не присылать позицию по WS: после закрытия и рыночного ордера сверяемся по REST,
+    # иначе следующее «50%» считается от старого размера.
+    from types import SimpleNamespace as NS
+    trade, sent, acks, base = _close_setup(monkeypatch, NS(size=2.0, side="long", contracts=None))
+    synced = []
+
+    async def rec(session):
+        synced.append(session.key_id)
+    monkeypatch.setattr(trade, "_reconcile", rec)
+    monkeypatch.setattr(trade, "SETTLE_SEC", 0)
+
+    async def run():
+        await trade.handle(None, {**base, "type": "close", "fraction": 0.5})
+        await trade.handle(None, {**base, "type": "place", "side": "buy", "orderType": "market", "notional": 50})
+        await trade.handle(None, {**base, "type": "place", "side": "buy", "price": 1, "notional": 50})  # лимитка — без сверки
+        await asyncio.sleep(0.05)
+    asyncio.run(run())
+    assert synced == ["k", "k"]

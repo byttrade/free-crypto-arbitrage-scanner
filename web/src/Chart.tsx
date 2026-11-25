@@ -1,4 +1,4 @@
-import { createChart, LineStyle, TickMarkType, type AutoscaleInfo, type IChartApi, type ISeriesApi, type LogicalRange, type Time, type UTCTimestamp } from "lightweight-charts";
+import { BaselineSeries, CandlestickSeries, LineSeries, createChart, LineStyle, TickMarkType, type AutoscaleInfo, type IChartApi, type ISeriesApi, type LogicalRange, type Time, type UTCTimestamp } from "lightweight-charts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useI18n, type Lang } from "./i18n";
@@ -47,9 +47,9 @@ export function SpreadChart({
       localization: { timeFormatter: (time: Time) => histMark(time, lang) },
       autoSize: true,
     });
-    const s = c.addLineSeries({ color: "#c8f542", lineWidth: 2, priceLineVisible: false });
+    const s = c.addSeries(LineSeries, { color: "#c8f542", lineWidth: 2, priceLineVisible: false });
     s.createPriceLine({ price: 0, color: "#9aa89a", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "" });
-    const m = c.addLineSeries({ color: "#e2b340", lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+    const m = c.addSeries(LineSeries, { color: "#e2b340", lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
     chart.current = c;
     series.current = s;
     avg.current = m;
@@ -551,7 +551,7 @@ function LinePane({ points, resetKey, tf, ema, onOlder }: { points: LinePoint[];
 
   useEffect(() => {
     if (!chart.current || series.current) return;
-    const s = chart.current.addBaselineSeries({
+    const s = chart.current.addSeries(BaselineSeries, {
       baseValue: { type: "price", price: 0 },
       topLineColor: "#0077ff",
       bottomLineColor: "#0077ff",
@@ -563,7 +563,7 @@ function LinePane({ points, resetKey, tf, ema, onOlder }: { points: LinePoint[];
       priceLineVisible: false,
       autoscaleInfoProvider: (base: () => AutoscaleInfo | null) => {
         const info = base();
-        if (!info) return null;
+        if (!info?.priceRange) return null;
         const min = Math.min(info.priceRange.minValue, 0);
         const max = Math.max(info.priceRange.maxValue, 0);
         const pad = Math.max((max - min) * 0.12, 0.4);
@@ -579,7 +579,7 @@ function LinePane({ points, resetKey, tf, ema, onOlder }: { points: LinePoint[];
       title: "",
     });
     series.current = s;
-    avg.current = chart.current.addLineSeries({
+    avg.current = chart.current.addSeries(LineSeries, {
       color: "#e2b340",
       lineWidth: 2,
       priceLineVisible: false,
@@ -635,7 +635,7 @@ function CandlePane({ bars, resetKey, tf, onOlder }: { bars: Candle[]; resetKey:
 
   useEffect(() => {
     if (!chart.current || series.current) return;
-    series.current = chart.current.addCandlestickSeries({
+    series.current = chart.current.addSeries(CandlestickSeries, {
       upColor: "#17c964",
       downColor: "#f31260",
       borderVisible: false,

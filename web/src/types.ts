@@ -104,6 +104,7 @@ export type OrderBook = {
   bids: BookLevel[];
   asks: BookLevel[];
   ts: number;
+  tick?: number | null; // шаг цены рынка с сервера
 };
 
 export type TapeTrade = {

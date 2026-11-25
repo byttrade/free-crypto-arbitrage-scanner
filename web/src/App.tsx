@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { MiniCharts, SpreadChart } from "./Chart";
 import { Book, Tape, Venue, price, type LegPick } from "./Dom";
+import { livePnl } from "./ladder";
 import { srvText, useI18n } from "./i18n";
 import { Diary } from "./Diary";
 import { Updates } from "./Updates";
@@ -325,6 +326,78 @@ export function CloseButtons({ row, busy, onClose }: { row: LivePos; busy: boole
   );
 }
 
+const pnlText = (n: number | null | undefined) => (n == null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}`);
+
+/** Позиция по открытому стакану: полоса фиксированной высоты, PnL по лучшей встречной цене этого стакана. */
+function BookPos({ rows, book, closing, onClose }: {
+  rows: LivePos[];
+  book: OrderBook | null;
+  closing: Set<string>;
+  onClose: (row: LivePos, fraction?: number) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="book-pos">
+      {!rows.length && <span className="muted">{t("noPosHere")}</span>}
+      {rows.map((row) => {
+        const pnl = livePnl(row, book) ?? row.pnl;
+        return (
+          <div className="book-pos-row" key={`${row.keyId}|${row.side}`}>
+            <b className={row.side === "long" ? "pos" : "neg"}>{row.side}</b>
+            <span>{row.size}</span>
+            {row.entry != null && <span className="muted">@ {price(row.entry)}</span>}
+            <b className={`pnl ${(pnl || 0) >= 0 ? "pos" : "neg"}`}>{pnlText(pnl)}</b>
+            <CloseButtons row={row} busy={closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`)} onClose={onClose} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Сводка выбранной связки: те же цифры, что в ленте, спред — по живому стакану. */
+function SpreadFacts({ row, livePct, map, slip, now }: {
+  row: CrossSpread;
+  livePct: number | null;
+  map: Map<string, FundingRow>;
+  slip: number;
+  now: number;
+}) {
+  const { t } = useI18n();
+  const spread = livePct ?? row.spreadPct;
+  const net = spread - (row.spreadPct - row.netPct); // минус те же комиссии и запас, что в ленте
+  const perp = row.kind === "perp";
+  const buy = legFund(map, row.buyVenue, row.base, row.quote, row.buyFundingPct, row.buyIntervalH);
+  const sell = legFund(map, row.sellVenue, row.base, row.quote, row.sellFundingPct, row.sellIntervalH);
+  const eight = perp ? eightFund(map, row) : null;
+  const fees = (row.feesPct ?? 0).toFixed(3);
+  return (
+    <div className="spread-facts">
+      <span>{t("spread")} <b className={spread > 0 ? "pos" : "neg"}>{spread.toFixed(3)}%</b></span>
+      <span title={t("feesHint", { fees, slip: String(slip) })}>{t("net")} <b className={net > 0 ? "pos" : "neg"}>{net.toFixed(3)}%</b></span>
+      <span>{t("feesShort")} <b>{fees}%</b></span>
+      {perp && (
+        <>
+          <span title={t("fundHead")}>{VENUE_LABEL[row.buyVenue]} <b className={fundClass(buy.rate)}>{fundText(buy.rate)}</b> / {periodText(buy.hours, t("hour"))}</span>
+          <span title={t("fundHead")}>{VENUE_LABEL[row.sellVenue]} <b className={fundClass(sell.rate)}>{fundText(sell.rate)}</b> / {periodText(sell.hours, t("hour"))}</span>
+          <span title={t("fund8hHead")}>{t("fund8h")} <b className={fundClass(eight)}>{fundText(eight)}</b></span>
+        </>
+      )}
+      {row.fundNextPct != null && row.fundNextAt != null && row.fundNextAt > now && (
+        <span className={fundClass(row.fundNextPct)}>
+          {t("payIn", { pct: fundText(row.fundNextPct), left: lifeText((row.fundNextAt - now) / 1000, t("min"), t("hour")) })}
+        </span>
+      )}
+      {row.ageSec != null && (
+        <span className="muted">
+          {t("lives", { age: lifeText(row.ageSec, t("min"), t("hour")) })}
+          {row.avgPct != null ? ` · ${t("avg1h", { pct: `${row.avgPct.toFixed(2)}%` })}` : ""}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function OrderEdit({
   row, onAmend, onCancel,
 }: {
@@ -535,6 +608,17 @@ export function App() {
   const [positions, setPositions] = useState<LivePos[]>([]);
   // Закрытие отправлено, ответа ещё нет: кнопка заблокирована, чтобы двойной клик не ушёл вторым ордером.
   const [closing, setClosing] = useState<Set<string>>(new Set());
+  // Закрытие позиции: кнопки ждут нового размера с биржи (иначе второе «50%» считается от старого). Ключ → размер до закрытия.
+  const closeWait = useRef(new Map<string, number>());
+  const unclose = (keys: string[]) => {
+    if (!keys.length) return;
+    keys.forEach((k) => closeWait.current.delete(k));
+    setClosing((c) => {
+      const next = new Set(c);
+      keys.forEach((k) => next.delete(k));
+      return next;
+    });
+  };
   const posSeen = useRef(new Set<string>());
   const [tapeH, setTapeH] = useState(156);
   const [chartH, setChartH] = useState(220);
@@ -620,6 +704,7 @@ export function App() {
           alerts?: AlertEvent[];
           research?: { status: string };
           text?: string;
+          ok?: boolean;
           kind?: string;
           keyId?: string;
         };
@@ -650,9 +735,23 @@ export function App() {
         }
         if (msg.type === "positions" && msg.keyId && msg.kind) {
           posSeen.current.add(`${msg.keyId}|${msg.kind}`);
-          setPositions((prev) => replaceSlice(prev, msg.keyId!, msg.kind!, (msg.rows || []) as LivePos[]));
+          const rows = (msg.rows || []) as LivePos[];
+          setPositions((prev) => replaceSlice(prev, msg.keyId!, msg.kind!, rows));
+          const changed = [...closeWait.current].filter(([k, size]) => {
+            const [keyId, symbol, side] = k.slice(4).split("|");
+            if (keyId !== msg.keyId) return false;
+            const now = rows.find((r) => r.symbol === symbol && r.side === side);
+            return !now || now.size !== size;
+          });
+          unclose(changed.map(([k]) => k));
         }
-        if (msg.type === "order_ack") setClosing(new Set());
+        if (msg.type === "order_ack") {
+          // Ошибка — разблокируем всё; успех — снимаем только связки, позиции ждут нового размера.
+          if (!msg.ok) {
+            closeWait.current.clear();
+            setClosing(new Set());
+          } else setClosing((c) => new Set([...c].filter((k) => closeWait.current.has(k))));
+        }
         if (msg.type === "order_ack" && msg.text) setNotice(msg.text);
         if (msg.type === "journal") setJrows((msg.rows as JRow[]) || []);
         if (msg.type === "alert" && msg.alert) {
@@ -922,19 +1021,41 @@ export function App() {
   const cancelOrder = (row: LiveOrder) => {
     sendTrade({ type: "cancel", keyId: row.keyId, venue: row.venue, kind: row.kind, symbol: row.symbol, orderId: row.id });
   };
-  const closePos = (row: LivePos, fraction = 1, limitPx?: number, quick = false) => {
-    const what = t(limitPx ? "blotCloseLimitAsk" : "blotCloseAsk", {
-      side: row.side || "", symbol: row.symbol, size: +(row.size * fraction).toPrecision(6), pct: fraction * 100,
-      venue: VENUE_LABEL[row.venue as VenueId] || row.venue, px: limitPx ? price(limitPx) : "",
-    });
-    if (!quick && !(row.demo ? window.confirm(what) : liveOk(false, what))) return;
-    setClosing((c) => new Set(c).add(`pos:${row.keyId}|${row.symbol}|${row.side}`));
+  // Закрытие — без окна подтверждения: позиция уменьшается (reduce-only), скорость важнее. confirmLive сервер всё равно требует.
+  const closePos = (row: LivePos, fraction = 1, limitPx?: number) => {
+    const key = `pos:${row.keyId}|${row.symbol}|${row.side}`;
+    if (closeWait.current.has(key)) return;
+    // Лимитка на закрытие сразу размер не меняет — ждём только ответа сервера.
+    if (!limitPx) {
+      closeWait.current.set(key, row.size);
+      window.setTimeout(() => unclose([key]), 4000); // биржа молчит — не держим кнопки вечно
+    }
+    setClosing((c) => new Set(c).add(key));
     sendTrade({
       type: "close", keyId: row.keyId, confirmLive: !row.demo, fraction,
       venue: row.venue, kind: row.kind, symbol: row.symbol, side: row.side,
       ...(limitPx ? { orderType: "limit", price: limitPx } : {}),
     });
   };
+  // C — снять все свои ордера по открытым стаканам (связка или вкладка графика). По коду клавиши — работает и в русской раскладке.
+  const cancelOpen = useRef(() => {});
+  cancelOpen.current = () => {
+    const legs: { venue: string; symbol: string; kind: string }[] = tab === "chart" ? [chartTarget] : watch.filter(Boolean);
+    orders.filter((o) => legs.some((l) => o.venue === l.venue && o.symbol === l.symbol && o.kind === l.kind)).forEach(cancelOrder);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "KeyC" || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
+      cancelOpen.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const atBook = (i: 0 | 1) => (p: LivePos) =>
+    !!watch[i] && p.size > 0 && p.venue === watch[i].venue && p.symbol === watch[i].symbol && p.kind === watch[i].kind;
+  const otherPos = positions.filter((p) => !atBook(0)(p) && !atBook(1)(p));
   const dragTape = (e: ReactPointerEvent) => {
     const y0 = e.clientY;
     const h0 = tapeH;
@@ -1453,6 +1574,9 @@ export function App() {
               </strong>
             </div>
             {liveSpread && (
+              <SpreadFacts row={liveSpread} livePct={livePct} map={fundByLeg} slip={settings?.slippagePct ?? 0} now={now} />
+            )}
+            {liveSpread && (
               <div className="pair-exec">
                 <button type="button" className="pair-open" title={t("openPairHint")} onClick={openPair}>
                   ⇄ {t("openPair", { usd: `${quote} ${quoteCcy}` })}
@@ -1473,14 +1597,14 @@ export function App() {
                 onPick={chooseLeg}
               />
             )}
-            {(orders.length > 0 || positions.length > 0) && (
+            {(orders.length > 0 || otherPos.length > 0) && (
               <div className="blotter">
                 {orders.length > 0 && <span className="muted">{t("blotOrders")}</span>}
                 {orders.map((row) => (
                   <OrderEdit key={`${row.venue}|${row.id}`} row={row} onAmend={amendOrder} onCancel={cancelOrder} />
                 ))}
-                {positions.length > 0 && <span className="muted">{t("blotPos")}</span>}
-                {positions.map((row) => (
+                {otherPos.length > 0 && <span className="muted">{t("blotPos")}</span>}
+                {otherPos.map((row) => (
                   <div className="blot-row" key={`${row.venue}|${row.symbol}|${row.side}`}>
                     <b>{row.demo ? "demo" : "live"}</b>
                     <Venue id={row.venue as VenueId} />
@@ -1491,7 +1615,10 @@ export function App() {
                     <span className={row.side === "long" ? "pos" : "neg"}>{row.side}</span>
                     <span>{row.size}</span>
                     {row.entry != null && <span className="muted">@ {price(row.entry)}</span>}
-                    <span className={(row.pnl || 0) >= 0 ? "pos" : "neg"}>{row.pnl == null ? "—" : row.pnl.toFixed(2)}</span>
+                    {(() => {
+                      const pnl = livePnl(row, books[`${row.venue}|${row.symbol}`]) ?? row.pnl;
+                      return <span className={(pnl || 0) >= 0 ? "pos" : "neg"}>{pnlText(pnl)}</span>;
+                    })()}
                     <CloseButtons row={row} busy={closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`)} onClose={closePos} />
                   </div>
                 ))}
@@ -1546,7 +1673,10 @@ export function App() {
                 onQuote={setQuote}
                 onCcy={setQuoteCcy}
                 freeUsdt={freeUsdt(keys, watch[0]?.venue)}
+                orders={orders}
+                onCancel={cancelOrder}
               />
+              <BookPos rows={positions.filter(atBook(0))} book={leftBook} closing={closing} onClose={closePos} />
               <Tape
                 trades={watch[0] ? tapes[`${watch[0].venue}|${watch[0].symbol}`] || [] : []}
                 title={t("buyTape")}
@@ -1567,7 +1697,10 @@ export function App() {
                 onQuote={setQuote}
                 onCcy={setQuoteCcy}
                 freeUsdt={freeUsdt(keys, watch[1]?.venue)}
+                orders={orders}
+                onCancel={cancelOrder}
               />
+              <BookPos rows={positions.filter(atBook(1))} book={rightBook} closing={closing} onClose={closePos} />
               <Tape
                 trades={watch[1] ? tapes[`${watch[1].venue}|${watch[1].symbol}`] || [] : []}
                 title={t("sellTape")}

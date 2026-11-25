@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useI18n, type Msg } from "./i18n";
-import type { BookLevel, OrderBook, TapeTrade, VenueId } from "./types";
+import { bookTick, onRung, tickLadder, tickText } from "./ladder";
+import type { BookLevel, LiveOrder, OrderBook, TapeTrade, VenueId } from "./types";
 import { VENUE_LABEL } from "./types";
 
 export type LegPick = {
@@ -62,31 +63,41 @@ function Row({
   side,
   role,
   venue,
+  mine,
+  tick,
   onHint,
   onPick,
+  onCancel,
 }: {
   level: BookLevel;
   max: number;
   side: "ask" | "bid";
   role: "buy" | "sell";
   venue: string;
+  mine: LiveOrder[];
+  tick: number | null;
   onHint: (text: string) => void;
   onPick: (level: BookLevel, side: "ask" | "bid") => void;
+  onCancel?: (row: LiveOrder) => void;
 }) {
-  const vol = <span className="vol">{size(level.size)}</span>;
-  const px = <span className="px">{price(level.price)}</span>;
+  const vol = <span className="vol">{level.size > 0 ? size(level.size) : ""}</span>;
+  const px = <span className="px">{tickText(level.price, tick) ?? price(level.price)}</span>;
   const { t } = useI18n();
   const hot = (role === "buy" && side === "ask") || (role === "sell" && side === "bid");
-  const text = explain(t, role, side, venue, level);
+  // Своя лимитка на этом тике: клик снимает её, а не ставит новую.
+  const own = mine.length > 0 && onCancel;
+  const text = own
+    ? `${t("cancelHit")} ${mine.map((o) => `${o.side} ${o.size ?? ""} @ ${price(o.price || 0)}`).join(" · ")}`
+    : explain(t, role, side, venue, level);
   return (
     <button
       type="button"
-      className={`ladder-row pop ${side} ${role}`}
+      className={`ladder-row pop ${side} ${role}${own ? " mine" : ""}`}
       onMouseEnter={() => onHint(text)}
       onFocus={() => onHint(text)}
-      onClick={() => onPick(level, side)}
+      onClick={() => (own ? mine.forEach((o) => onCancel(o)) : onPick(level, side))}
     >
-      <div className="bar" style={{ "--w": Math.max(0.06, level.size / max) } as React.CSSProperties} />
+      <div className="bar" style={{ "--w": level.size > 0 ? Math.max(0.06, level.size / max) : 0 } as React.CSSProperties} />
       {role === "buy" ? (
         <>
           {vol}
@@ -98,7 +109,11 @@ function Row({
           {vol}
         </>
       )}
-      <em className="row-act">{hot ? (role === "buy" ? t("buyBtn") : t("sellBtn")) : t("rowPrice")}</em>
+      {own ? (
+        <em className="row-act row-x">× {mine.map((o) => o.side).join("/")}</em>
+      ) : (
+        <em className="row-act">{hot ? (role === "buy" ? t("buyBtn") : t("sellBtn")) : t("rowPrice")}</em>
+      )}
     </button>
   );
 }
@@ -116,6 +131,8 @@ export function Book({
   onQuote,
   onCcy,
   freeUsdt,
+  orders = [],
+  onCancel,
 }: {
   book: OrderBook | null;
   role: "buy" | "sell";
@@ -129,9 +146,17 @@ export function Book({
   onQuote: (n: number) => void;
   onCcy: (ccy: "USDT" | "USD") => void;
   freeUsdt?: number | null;
+  orders?: LiveOrder[];
+  onCancel?: (row: LiveOrder) => void;
 }) {
-  const asks = (book?.asks || []).slice(0, 14).reverse();
-  const bids = (book?.bids || []).slice(0, 14);
+  // Фиксированная сетка тиков: пустой тик остаётся строкой, строки не прыгают на каждом апдейте.
+  // Своя дальняя лимитка растягивает сетку — она всегда видна и снимается кликом.
+  const legOrders = orders.filter((o) => o.venue === venue && o.symbol === symbol && o.kind === (kind || "perp") && o.price);
+  const tick = book ? bookTick(book) : null;
+  const rungs = book ? tickLadder(book, tick, 14, legOrders.map((o) => o.price!)) : { asks: [], bids: [] };
+  const asks = [...rungs.asks].reverse();
+  const bids = rungs.bids;
+  const mineAt = (r: (typeof bids)[number]) => legOrders.filter((o) => onRung(r, o.price!, tick));
   const max = Math.max(1, ...asks.map((l) => l.size), ...bids.map((l) => l.size));
   const bestAsk = book?.asks[0];
   const bestBid = book?.bids[0];
@@ -239,8 +264,11 @@ export function Book({
             side="ask"
             role={role}
             venue={name}
+            mine={mineAt(l)}
+            tick={tick}
             onHint={setHint}
             onPick={pick}
+            onCancel={onCancel}
           />
         ))}
         <div className="touch" ref={touchRef}>
@@ -255,8 +283,11 @@ export function Book({
             side="bid"
             role={role}
             venue={name}
+            mine={mineAt(l)}
+            tick={tick}
             onHint={setHint}
             onPick={pick}
+            onCancel={onCancel}
           />
         ))}
       </div>

@@ -1,8 +1,10 @@
 // Вкладка «Графики»: свечи монеты с индикаторами, стакан-лесенка и быстрые ордера для скальпинга.
 import {
+  CandlestickSeries, HistogramSeries, LineSeries,
   createChart, CrosshairMode, LineStyle,
   type IChartApi, type IPriceLine, type ISeriesApi, type LogicalRange, type MouseEventParams, type Time, type UTCTimestamp,
 } from "lightweight-charts";
+import { bookTick, livePnl, onRung, tickLadder, tickText, type Rung } from "./ladder";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chartText, look, tickFormat } from "./Chart";
 import { price as fmt, QUOTE_CHIPS, Venue } from "./Dom";
@@ -67,7 +69,7 @@ export function Scalp({
   closing: Set<string>;
   send: (body: Record<string, unknown>) => void;
   liveOk: (demo: boolean, text: string) => boolean;
-  onClose: (row: LivePos, fraction?: number, limitPx?: number, quick?: boolean) => void;
+  onClose: (row: LivePos, fraction?: number, limitPx?: number) => void;
   onCancel: (row: LiveOrder) => void;
 }) {
   const { t, lang } = useI18n();
@@ -140,9 +142,7 @@ export function Scalp({
 
   // ---------- графики ----------
   const mainRef = useRef<HTMLDivElement>(null);
-  const rsiRef = useRef<HTMLDivElement>(null);
-  const macdRef = useRef<HTMLDivElement>(null);
-  const charts = useRef<{ main?: IChartApi; rsi?: IChartApi; macd?: IChartApi }>({});
+  const charts = useRef<{ main?: IChartApi }>({});
   const series = useRef<{ candle?: ISeriesApi<"Candlestick">; vol?: ISeriesApi<"Histogram">; over: ISeriesApi<"Line">[];
     rsi?: ISeriesApi<"Line">; macd?: ISeriesApi<"Line">; sig?: ISeriesApi<"Line">; hist?: ISeriesApi<"Histogram"> }>({ over: [] });
   const olderRef = useRef(askOlder);
@@ -152,37 +152,34 @@ export function Scalp({
   useEffect(() => {
     if (!mainRef.current) return;
     const base = { ...look, ...chartText(lang), crosshair: { ...look.crosshair, mode: CrosshairMode.Normal } };
-    const main = createChart(mainRef.current, { ...base, rightPriceScale: { ...look.rightPriceScale, scaleMargins: { top: 0.08, bottom: 0.2 } } });
-    const candle = main.addCandlestickSeries({ upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN });
-    const vol = main.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
+    // Один график, панели снизу (lightweight-charts 5): шкала времени общая, у RSI и MACD — свои шкалы цены.
+    const main = createChart(mainRef.current, {
+      ...base,
+      layout: { ...base.layout, panes: { separatorColor: "#26303b", separatorHoverColor: "rgba(200,245,66,.25)", enableResize: true } },
+      rightPriceScale: { ...look.rightPriceScale, scaleMargins: { top: 0.06, bottom: 0.2 } },
+    });
+    const candle = main.addSeries(CandlestickSeries, { upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN });
+    const vol = main.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
     main.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
-    const subs: IChartApi[] = [];
-    const sub = (el: HTMLDivElement | null) => {
-      if (!el) return undefined;
-      const c = createChart(el, { ...base, layout: { ...look.layout, attributionLogo: false }, timeScale: { ...base.timeScale, visible: false }, rightPriceScale: { ...look.rightPriceScale, scaleMargins: { top: 0.1, bottom: 0.1 } } });
-      subs.push(c);
-      return c;
-    };
-    const r = sub(rsiRef.current);
-    const m = sub(macdRef.current);
-    const rsiLine = r?.addLineSeries({ color: "#a78bfa", lineWidth: 1, priceLineVisible: false });
+    const rsiPane = ind.rsi ? 1 : -1;
+    const macdPane = ind.macd ? (ind.rsi ? 2 : 1) : -1;
+    const rsiLine = rsiPane > 0 ? main.addSeries(LineSeries, {
+      color: "#a78bfa", lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false,
+      priceFormat: { type: "price", precision: 1, minMove: 0.1 },
+      autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+    }, rsiPane) : undefined;
     rsiLine?.createPriceLine({ price: 70, color: "#3a4654", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "" });
     rsiLine?.createPriceLine({ price: 30, color: "#3a4654", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "" });
-    const hist = m?.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
-    const macdLine = m?.addLineSeries({ color: "#1e90ff", lineWidth: 1, priceLineVisible: false });
-    const sigLine = m?.addLineSeries({ color: "#f5a524", lineWidth: 1, priceLineVisible: false });
-    charts.current = { main, rsi: r, macd: m };
+    const sub = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
+    const hist = macdPane > 0 ? main.addSeries(HistogramSeries, { ...sub }, macdPane) : undefined;
+    const macdLine = macdPane > 0 ? main.addSeries(LineSeries, { ...sub, color: "#1e90ff", lineWidth: 1, lastValueVisible: true }, macdPane) : undefined;
+    const sigLine = macdPane > 0 ? main.addSeries(LineSeries, { ...sub, color: "#f5a524", lineWidth: 1 }, macdPane) : undefined;
+    main.panes().forEach((pane, i) => pane.setStretchFactor(i === 0 ? 3 : 1));
+    charts.current = { main };
     series.current = { candle, vol, over: [], rsi: rsiLine, macd: macdLine, sig: sigLine, hist };
-    // Нижние панели идут за основной по времени (и наоборот), без петли.
-    let syncing = false;
-    const all = [main, ...subs];
-    all.forEach((c) => c.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
-      if (syncing || !range) return;
-      syncing = true;
-      all.forEach((o) => o !== c && o.timeScale().setVisibleLogicalRange(range));
-      syncing = false;
-      if (c === main && range.from < 5) olderRef.current();
-    }));
+    main.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
+      if (range && range.from < 5) olderRef.current();
+    });
     const onMove = (p: MouseEventParams<Time>) => {
       const d = p.seriesData.get(candle) as { open: number; high: number; low: number; close: number } | undefined;
       const tt = typeof p.time === "number" ? p.time * 1000 : null;
@@ -193,7 +190,6 @@ export function Scalp({
     setGen((g) => g + 1);
     return () => {
       main.remove();
-      subs.forEach((c) => c.remove());
       charts.current = {};
       series.current = { over: [] };
     };
@@ -212,7 +208,7 @@ export function Scalp({
     s.over.forEach((x) => main.removeSeries(x));
     s.over = [];
     const add = (vals: Val[], color: string, width: 1 | 2 = 1, style = LineStyle.Solid) => {
-      const ser = main.addLineSeries({ color, lineWidth: width, lineStyle: style, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      const ser = main.addSeries(LineSeries, { color, lineWidth: width, lineStyle: style, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
       ser.setData(line(bars, vals));
       s.over.push(ser);
     };
@@ -244,11 +240,12 @@ export function Scalp({
     const pl = (p: number, color: string, title: string, style = LineStyle.Solid) =>
       priceLines.current.push(c.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }));
     myPos.forEach((p) => {
-      if (p.entry) pl(p.entry, p.side === "long" ? UP : DOWN, `${p.side} ${p.size}${p.pnl == null ? "" : ` ${p.pnl >= 0 ? "+" : ""}${p.pnl.toFixed(2)}`}`);
+      const pnl = livePnl(p, book) ?? p.pnl;
+      if (p.entry) pl(p.entry, p.side === "long" ? UP : DOWN, `${p.side} ${p.size}${pnl == null ? "" : ` ${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`}`);
       if (p.liq && p.liq > 0) pl(p.liq, "#f5a524", "liq", LineStyle.Dotted);
     });
     myOrders.forEach((o) => o.price && pl(o.price, o.side === "buy" ? UP : DOWN, `${o.side} ${o.size ?? ""}`, LineStyle.Dashed));
-  }, [myPos, myOrders, gen]);
+  }, [myPos, myOrders, book, gen]);
 
   // ---------- ордера ----------
   const ok = (demo: boolean, text: string) => oneClick || liveOk(demo, text);
@@ -281,8 +278,8 @@ export function Scalp({
       const k = e.key.toLowerCase();
       if (k === "b") h.market("buy");
       else if (k === "s") h.market("sell");
-      else if (k === "x" && h.pos) h.onClose(h.pos, 1, undefined, true);
-      else if (k === "h" && h.pos) h.onClose(h.pos, 0.5, undefined, true);
+      else if (k === "x" && h.pos) h.onClose(h.pos, 1);
+      else if (k === "h" && h.pos) h.onClose(h.pos, 0.5);
       else return;
       e.preventDefault();
     };
@@ -309,15 +306,30 @@ export function Scalp({
   useEffect(() => findCoin(target.base, target.kind, false), [target.base, target.kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const last = bars[bars.length - 1];
+  const rsiNow = useMemo(() => (ind.rsi ? rsi(bars.map((b) => b.c), 14).at(-1) ?? null : null), [bars, ind.rsi]);
   const shown = hover || last;
   const chg = shown && shown.o ? ((shown.c - shown.o) / shown.o) * 100 : null;
   const ladder = useMemo(() => {
     if (!book) return null;
-    const asks = book.asks.slice(0, 12).reverse();
-    const bids = book.bids.slice(0, 12);
-    const max = Math.max(...asks.map((l) => l.size), ...bids.map((l) => l.size), 1e-12);
-    return { asks, bids, max };
-  }, [book]);
+    const tick = bookTick(book);
+    const r = tickLadder(book, tick, 12, myOrders.flatMap((o) => (o.price ? [o.price] : [])));
+    const asks = [...r.asks].reverse();
+    const max = Math.max(...asks.map((l) => l.size), ...r.bids.map((l) => l.size), 1e-12);
+    return { asks, bids: r.bids, max, tick };
+  }, [book, myOrders]);
+  // Строка лесенки: своя лимитка на тике — подсветка и снятие кликом; иначе — новая лимитка.
+  const rung = (l: Rung, side: "ask" | "bid") => {
+    const mine = ladder ? myOrders.filter((o) => o.price && onRung(l, o.price, ladder.tick)) : [];
+    return (
+      <button key={`${side}${l.price}`} type="button" className={`lv ${side}${mine.length ? " mine" : ""}`}
+        disabled={!key && !mine.length}
+        title={mine.length ? t("cancelHit") : undefined}
+        onClick={() => (mine.length ? mine.forEach(onCancel) : limit(side === "ask" ? "sell" : "buy", l.price))}>
+        <i style={{ width: `${(l.size / (ladder?.max || 1)) * 100}%` }} />
+        <span>{tickText(l.price, ladder?.tick ?? null) ?? fmt(l.price)}</span><span>{mine.length ? `× ${mine.map((o) => o.side).join("/")}` : l.size > 0 ? qty(l.size) : ""}</span>
+      </button>
+    );
+  };
   const setI = (patch: Partial<Ind>) => setInd((v) => ({ ...v, ...patch }));
   const indRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -398,11 +410,13 @@ export function Scalp({
           <span className="ema-keys">
             {ind.ema.map((n, i) => <i key={n} style={{ color: EMA_COLORS[i % EMA_COLORS.length] }}>EMA {n}</i>)}
             {ind.vwap && <i style={{ color: "#22d3ee" }}>VWAP</i>}
+            {ind.rsi && <i style={{ color: "#a78bfa" }}>RSI 14{rsiNow != null ? ` ${rsiNow.toFixed(1)}` : ""}</i>}
+            {ind.macd && <i style={{ color: "#1e90ff" }}>MACD 12, 26, 9</i>}
           </span>
         </div>
-        <div className="scalp-main" ref={mainRef}>{!bars.length && <span className="muted chart-wait">{t("chLoading")}</span>}</div>
-        {ind.rsi && <div className="scalp-sub" ref={rsiRef}><span className="sub-name">RSI 14</span></div>}
-        {ind.macd && <div className="scalp-sub" ref={macdRef}><span className="sub-name">MACD</span></div>}
+        <div className="scalp-main" ref={mainRef}>
+          {!bars.length && <span className="muted chart-wait">{t("chLoading")}</span>}
+        </div>
       </div>
 
       <aside className="scalp-side">
@@ -454,17 +468,20 @@ export function Scalp({
                 <b className={p.side === "long" ? "pos" : "neg"}>{p.side}</b>
                 <span>{p.size}</span>
                 {p.entry != null && <span className="muted">@ {fmt(p.entry)}</span>}
-                <b className={(p.pnl || 0) >= 0 ? "pos" : "neg"}>{p.pnl == null ? "—" : `${p.pnl >= 0 ? "+" : ""}${p.pnl.toFixed(2)}`}</b>
+                {(() => {
+                  const pnl = livePnl(p, book) ?? p.pnl;
+                  return <b className={(pnl || 0) >= 0 ? "pos" : "neg"}>{pnl == null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`}</b>;
+                })()}
               </div>
               {p.liq && p.liq > 0 ? <div className="muted">liq {fmt(p.liq)}{p.leverage ? ` · ${p.leverage}x` : ""}</div> : null}
               <div className="pos-close">
                 {[0.25, 0.5, 0.75, 1].map((f) => (
-                  <button key={f} type="button" className={`mini${f === 1 ? " sell" : ""}`} disabled={busy} onClick={() => onClose(p, f, undefined, oneClick)}>
+                  <button key={f} type="button" className={`mini${f === 1 ? " sell" : ""}`} disabled={busy} onClick={() => onClose(p, f)}>
                     {busy ? "…" : f === 1 ? t("chCloseAll") : `${f * 100}%`}
                   </button>
                 ))}
               </div>
-              <button type="button" className="ghost wide" disabled={busy || !exitPx} title={t("chCloseLimitHint")} onClick={() => onClose(p, 1, exitPx, oneClick)}>
+              <button type="button" className="ghost wide" disabled={busy || !exitPx} title={t("chCloseLimitHint")} onClick={() => onClose(p, 1, exitPx)}>
                 {t("chCloseLimit")} {exitPx ? fmt(exitPx) : ""}
               </button>
             </section>
@@ -490,21 +507,11 @@ export function Scalp({
 
         <section className="ladder-mini" title={t("chLadderHint")}>
           {!ladder && <span className="muted">{t("chLoading")}</span>}
-          {ladder?.asks.map((l) => (
-            <button key={`a${l.price}`} type="button" className="lv ask" disabled={!key} onClick={() => limit("sell", l.price)}>
-              <i style={{ width: `${(l.size / ladder.max) * 100}%` }} />
-              <span>{fmt(l.price)}</span><span>{qty(l.size)}</span>
-            </button>
-          ))}
+          {ladder?.asks.map((l) => rung(l, "ask"))}
           {ladder && bestBid && bestAsk && (
             <div className="lv mid">{t("chSpread")} {fmt(bestAsk - bestBid)} · {(((bestAsk - bestBid) / bestBid) * 100).toFixed(4)}%</div>
           )}
-          {ladder?.bids.map((l) => (
-            <button key={`b${l.price}`} type="button" className="lv bid" disabled={!key} onClick={() => limit("buy", l.price)}>
-              <i style={{ width: `${(l.size / ladder.max) * 100}%` }} />
-              <span>{fmt(l.price)}</span><span>{qty(l.size)}</span>
-            </button>
-          ))}
+          {ladder?.bids.map((l) => rung(l, "bid"))}
         </section>
       </aside>
     </div>

@@ -8,6 +8,7 @@ from typing import Any
 
 from bytx import create_exchange, errors
 from bytx.testing import EXCHANGES
+from ccxt.base.decimal_to_precision import TICK_SIZE
 
 VENUE_LABEL = {
     "binance": "Binance",
@@ -444,6 +445,28 @@ def levels(book) -> tuple[list[dict], list[dict]]:
     return take(book.bids), take(book.asks)
 
 
+_steps: dict[tuple[str, str, str], float] = {}
+
+
+async def price_step(venue: str, symbol: str, kind: str) -> float | None:
+    """Шаг цены рынка (кэш на процесс). Только для бирж с шагом в тиках: у Hyperliquid цена — значащие цифры."""
+    k = (venue, kind, symbol)
+    if k in _steps:
+        return _steps[k]
+    ex = client(venue, kind)
+    if not ex:
+        return None
+    try:
+        m = await ex.market(symbol)
+    except Exception:
+        return None  # не кэшируем: следующий стакан спросит снова
+    raw = getattr(ex, "_ex", None)
+    step = m.price_step if getattr(raw, "precisionMode", TICK_SIZE) == TICK_SIZE else None
+    if step and step > 0:
+        _steps[k] = step
+    return _steps.get(k)
+
+
 async def load_book(venue: str, symbol: str, kind: str) -> dict | None:
     ex = client(venue, kind)
     if not ex:
@@ -451,7 +474,8 @@ async def load_book(venue: str, symbol: str, kind: str) -> dict | None:
     try:
         book = await ex.order_book(symbol, 40)
         bids, asks = levels(book)
-        return {"venue": venue, "symbol": symbol, "bids": bids, "asks": asks, "ts": book.timestamp or 0}
+        return {"venue": venue, "symbol": symbol, "bids": bids, "asks": asks, "ts": book.timestamp or 0,
+                "tick": _steps.get((venue, kind, symbol))}
     except errors.BytxError:
         return None
 
@@ -526,6 +550,11 @@ async def _run_watch(key: str, spec: dict) -> None:
     if not ex:
         return
     last = {"book": 0.0, "tape": 0.0}
+    # Шаг цены нужен интерфейсу для сетки стакана; ждём недолго — без него сетку оценит браузер.
+    try:
+        tick = await asyncio.wait_for(price_step(venue, symbol, kind), 3)
+    except Exception:
+        tick = None
 
     async def books() -> None:
         try:
@@ -535,7 +564,7 @@ async def _run_watch(key: str, spec: dict) -> None:
                 await _put({
                     "type": "book",
                     "book": {"venue": venue, "symbol": symbol, "bids": bids, "asks": asks,
-                             "ts": int(last["book"] * 1000)},  # время получения: часы биржи и Docker могут расходиться
+                             "ts": int(last["book"] * 1000), "tick": tick},  # время получения: часы биржи и Docker могут расходиться
                 })
         except Exception:
             last["book"] = 0.0  # поток упал — дальше живём на REST

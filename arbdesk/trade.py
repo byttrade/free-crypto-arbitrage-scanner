@@ -203,6 +203,7 @@ async def _ack(socket, ok: bool, text: str) -> None:
 
 
 _closing: set[tuple] = set()  # (ключ, символ, сторона): закрытие в пути — второе не отправляем
+SETTLE_SEC = 1.5  # после рыночного ордера/закрытия сверяем позицию по REST: WS позиций у бирж (Bitget demo) запаздывает
 
 
 def _num(value) -> float | None:
@@ -249,6 +250,8 @@ async def handle(socket, msg: dict) -> None:
             mark = "demo" if session.demo else "live"
             at = "market" if market else order.price
             await _ack(socket, True, f"{mark}: {order.side} {order.symbol} @ {at}")
+            if market:
+                asyncio.create_task(_settle(session))
         elif action == "amend":
             order = await ex.ws_amend_order(
                 symbol,
@@ -292,6 +295,7 @@ async def handle(socket, msg: dict) -> None:
             _remember(session, order)
             pct = f"{part * 100:g}%"
             await _ack(socket, True, f"закрытие {pct} отправлено" + (f" лимиткой @ {order.price}" if how["type"] == "limit" else ""))
+            asyncio.create_task(_settle(session))
         else:
             return
         await push_orders(session)
@@ -310,6 +314,11 @@ async def handle(socket, msg: dict) -> None:
             asyncio.create_task(_reconcile(session))
     except Exception as exc:
         await _ack(socket, False, str(exc).split("\n")[0][:180])
+
+
+async def _settle(session: Session) -> None:
+    await asyncio.sleep(SETTLE_SEC)
+    await _reconcile(session)
 
 
 async def _reconcile(session: Session) -> None:
