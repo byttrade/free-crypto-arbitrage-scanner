@@ -475,3 +475,25 @@ def test_diary_api(monkeypatch, tmp_path):
     assert c.get("/api/diary", params={"strategy": "spread"}).json()["total"] == 0
     assert "BTC" in c.get("/api/diary/export.csv").text
     assert c.delete(f"/api/diary/{tid}").json()["ok"] and c.get("/api/diary").json()["total"] == 0
+
+
+def test_pair_double_close_sends_once(monkeypatch, tmp_path):
+    """Двойной клик «Закрыть»: второе закрытие не должно отправить ордера повторно (на споте открыло бы позицию)."""
+    arb_exec, exa, exb, msg = _pair_setup(monkeypatch, tmp_path)
+    asyncio.run(arb_exec.open_pair(msg))
+    row = arb_exec.journal()[-1]
+    for ex in (exa, exb):
+        orig = ex.ws_place_order
+
+        async def slow(*a, _orig=orig, **k):
+            await asyncio.sleep(0.01)  # ответ биржи идёт не мгновенно
+            return await _orig(*a, **k)
+        ex.ws_place_order = slow
+    n = len(exa.sent), len(exb.sent)
+
+    async def twice():
+        return await asyncio.gather(arb_exec.close_pair({"id": row["id"]}), arb_exec.close_pair({"id": row["id"]}),
+                                    arb_exec.fix_pair({"id": row["id"], "action": "unwind"}))
+    res = asyncio.run(twice())
+    assert (len(exa.sent) - n[0], len(exb.sent) - n[1]) == (1, 1)
+    assert res[0][0] and not res[1][0] and row["status"] == "closed"

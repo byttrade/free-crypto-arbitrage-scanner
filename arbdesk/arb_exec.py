@@ -20,6 +20,21 @@ from .market import quotes, taker
 MIN_NOTIONAL = 5.0
 _journal: list[dict] = []
 _loaded = False
+_busy: set[str] = set()  # связки, по которым сейчас идут ордера
+
+
+def _exclusive(fn):
+    """Одно действие на связку за раз: двойной клик «Закрыть» не должен отправить ордера дважды."""
+    async def run(msg: dict) -> tuple[bool, str]:
+        pid = str(msg.get("id") or "")
+        if pid in _busy:
+            return False, "по связке уже идёт действие — дождитесь ответа"
+        _busy.add(pid)
+        try:
+            return await fn(msg)
+        finally:
+            _busy.discard(pid)
+    return run
 
 
 def _file():
@@ -256,6 +271,7 @@ def _leg_session(leg: dict, kind: str):
     return s, err
 
 
+@_exclusive
 async def fix_pair(msg: dict) -> tuple[bool, str]:
     """chase — дослать отстающую ногу до размера исполненной; unwind — закрыть лишнее на исполненной."""
     row = _row(str(msg.get("id") or ""))
@@ -294,6 +310,7 @@ async def fix_pair(msg: dict) -> tuple[bool, str]:
     return True, "перекос закрыт" if row["status"] == "open" else f"осталось {pnl(row)['imbalance']:+.6g}"
 
 
+@_exclusive
 async def close_pair(msg: dict) -> tuple[bool, str]:
     row = _row(str(msg.get("id") or ""))
     if not row or row["status"] not in ("open", "partial"):

@@ -25,7 +25,7 @@ type Tab = "cross" | "pairs" | "funding" | "alerts" | "journal" | "diary";
 type JLeg = { role: "buy" | "sell"; venue: VenueId; symbol: string; side: string; filled: number; avg: number | null; error: string | null; demo: boolean };
 type JRow = {
   id: string; ts: number; kind: MarketKind; base: string; quote: string; notional: number; status: string;
-  legs: JLeg[]; qtyBuy: number; qtySell: number; imbalance: number; entrySpreadPct: number | null; pnl: number | null; fees: number;
+  legs: JLeg[]; qtyBuy: number; qtySell: number; imbalance: number; entrySpreadPct: number | null; pnl: number | null; fees: number; tolPct: number;
 };
 
 type CoinRow = { venue: VenueId; symbol: string; bid: number; ask: number; volumeUsd: number; ageSec: number; ws: boolean; taker: number; odd?: boolean };
@@ -525,6 +525,8 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [orders, setOrders] = useState<LiveOrder[]>([]);
   const [positions, setPositions] = useState<LivePos[]>([]);
+  // Закрытие отправлено, ответа ещё нет: кнопка заблокирована, чтобы двойной клик не ушёл вторым ордером.
+  const [closing, setClosing] = useState<Set<string>>(new Set());
   const [tapeH, setTapeH] = useState(156);
   const [chartH, setChartH] = useState(220);
   const [rightW, setRightW] = useState(() => Math.round(window.innerWidth * 0.5));
@@ -640,6 +642,7 @@ export function App() {
         if (msg.type === "positions" && msg.keyId && msg.kind) {
           setPositions((prev) => replaceSlice(prev, msg.keyId!, msg.kind!, (msg.rows || []) as LivePos[]));
         }
+        if (msg.type === "order_ack") setClosing(new Set());
         if (msg.type === "order_ack" && msg.text) setNotice(msg.text);
         if (msg.type === "journal") setJrows((msg.rows as JRow[]) || []);
         if (msg.type === "alert" && msg.alert) {
@@ -849,7 +852,13 @@ export function App() {
   };
   const pairAct = (row: JRow, type: "pair_fix" | "pair_close", action?: "chase" | "unwind") => {
     const demo = row.legs.every((l) => l.demo);
-    if (!liveOk(demo, `${row.base}: ${type === "pair_close" ? t("jClose") : action}`)) return;
+    if (type === "pair_close") {
+      // Закрытие необратимо — подтверждаем и на demo; на live текст уже содержит предупреждение.
+      const legs = row.legs.map((l) => `${VENUE_LABEL[l.venue as VenueId] || l.venue} ${l.side === "buy" ? "sell" : "buy"} ${(l.role === "buy" ? row.qtyBuy : row.qtySell).toPrecision(4)}`).join(" · ");
+      const what = t("jCloseAsk", { pair: `${row.base}/${row.quote} ${row.kind}`, legs, tol: row.tolPct });
+      if (!(demo ? window.confirm(what) : liveOk(false, what))) return;
+    } else if (!liveOk(demo, `${row.base}: ${action}`)) return;
+    if (type === "pair_close") setClosing((c) => new Set(c).add(`pair:${row.id}`));
     sendTrade({ type, id: row.id, action, confirmLive: !demo });
   };
   const onPick = (leg: LegPick) => {
@@ -893,7 +902,9 @@ export function App() {
     sendTrade({ type: "cancel", keyId: row.keyId, venue: row.venue, kind: row.kind, symbol: row.symbol, orderId: row.id });
   };
   const closePos = (row: LivePos) => {
-    if (!liveOk(row.demo, `${t("blotClose")} ${row.side} ${row.symbol} · ${row.size} · ${row.venue}`)) return;
+    const what = t("blotCloseAsk", { side: row.side || "", symbol: row.symbol, size: row.size, venue: VENUE_LABEL[row.venue as VenueId] || row.venue });
+    if (!(row.demo ? window.confirm(what) : liveOk(false, what))) return;
+    setClosing((c) => new Set(c).add(`pos:${row.keyId}|${row.symbol}|${row.side}`));
     sendTrade({
       type: "close", keyId: row.keyId, confirmLive: !row.demo,
       venue: row.venue, kind: row.kind, symbol: row.symbol, side: row.side,
@@ -1311,7 +1322,7 @@ export function App() {
                           </>
                         )}
                         {(r.status === "open" || r.status === "partial") && (
-                          <button type="button" className="mini sell" onClick={() => pairAct(r, "pair_close")}>{t("jClose")}</button>
+                          <button type="button" className="mini sell" title={t("jCloseHint")} disabled={closing.has(`pair:${r.id}`)} onClick={() => pairAct(r, "pair_close")}>{closing.has(`pair:${r.id}`) ? "…" : t("jClose")}</button>
                         )}
                       </td>
                     </tr>
@@ -1420,11 +1431,13 @@ export function App() {
                 {positions.map((row) => (
                   <div className="blot-row" key={`${row.venue}|${row.symbol}|${row.side}`}>
                     <b>{row.demo ? "demo" : "live"}</b>
+                    <Venue id={row.venue as VenueId} />
                     <span>{row.symbol}</span>
                     <span className={row.side === "long" ? "pos" : "neg"}>{row.side}</span>
                     <span>{row.size}</span>
+                    {row.entry != null && <span className="muted">@ {price(row.entry)}</span>}
                     <span className={(row.pnl || 0) >= 0 ? "pos" : "neg"}>{row.pnl == null ? "—" : row.pnl.toFixed(2)}</span>
-                    <button type="button" className="mini sell" onClick={() => closePos(row)}>{t("blotClose")}</button>
+                    <button type="button" className="mini sell" title={t("blotCloseHint")} disabled={closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`)} onClick={() => closePos(row)}>{closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`) ? "…" : t("blotClose")}</button>
                   </div>
                 ))}
               </div>
