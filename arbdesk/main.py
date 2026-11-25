@@ -431,6 +431,8 @@ async def ws(socket: WebSocket):
     await socket.send_text(json.dumps({"type": "pairs", "rows": research.rows(), "research": research.info()}, default=float))
     await socket.send_text(json.dumps({"type": "funding", "rows": build_funding()[:200]}, default=float))
     await socket.send_text(json.dumps({"type": "journal", "rows": arb_exec.public_rows()}, default=float))
+    for msg in trade.snapshot():
+        await socket.send_text(json.dumps(msg, default=float))
     off = alerts.on_alert(lambda a: asyncio.create_task(socket.send_text(json.dumps({"type": "alert", "alert": a}, default=float))))
     try:
         while True:

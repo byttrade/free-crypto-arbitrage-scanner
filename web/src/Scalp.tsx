@@ -245,7 +245,7 @@ export function Scalp({
       priceLines.current.push(c.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }));
     myPos.forEach((p) => {
       if (p.entry) pl(p.entry, p.side === "long" ? UP : DOWN, `${p.side} ${p.size}${p.pnl == null ? "" : ` ${p.pnl >= 0 ? "+" : ""}${p.pnl.toFixed(2)}`}`);
-      if (p.liq) pl(p.liq, "#f5a524", "liq", LineStyle.Dotted);
+      if (p.liq && p.liq > 0) pl(p.liq, "#f5a524", "liq", LineStyle.Dotted);
     });
     myOrders.forEach((o) => o.price && pl(o.price, o.side === "buy" ? UP : DOWN, `${o.side} ${o.size ?? ""}`, LineStyle.Dashed));
   }, [myPos, myOrders, gen]);
@@ -456,7 +456,7 @@ export function Scalp({
                 {p.entry != null && <span className="muted">@ {fmt(p.entry)}</span>}
                 <b className={(p.pnl || 0) >= 0 ? "pos" : "neg"}>{p.pnl == null ? "—" : `${p.pnl >= 0 ? "+" : ""}${p.pnl.toFixed(2)}`}</b>
               </div>
-              {p.liq ? <div className="muted">liq {fmt(p.liq)}{p.leverage ? ` · ${p.leverage}x` : ""}</div> : null}
+              {p.liq && p.liq > 0 ? <div className="muted">liq {fmt(p.liq)}{p.leverage ? ` · ${p.leverage}x` : ""}</div> : null}
               <div className="pos-close">
                 {[0.25, 0.5, 0.75, 1].map((f) => (
                   <button key={f} type="button" className={`mini${f === 1 ? " sell" : ""}`} disabled={busy} onClick={() => onClose(p, f, undefined, oneClick)}>

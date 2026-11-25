@@ -1,6 +1,6 @@
 {
   "name": "@byttrade/arb-terminal",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "ArbDesk: free crypto arbitrage terminal and trading journal for 11 exchanges (spreads, funding rates, pair trading, order books, PnL diary, Telegram alerts)",
   "keywords": ["crypto", "arbitrage", "arbitrage-scanner", "funding-rate", "binance", "bybit", "okx", "order-book", "trading-terminal", "trading-journal", "pnl", "pair-trading"],

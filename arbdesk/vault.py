@@ -16,7 +16,7 @@ from .market import proxy_for
 from .settings import DATA_DIR
 
 FILE = DATA_DIR / "vault.json"
-STABLES = ("USDT", "USDC", "USD", "BUSD")
+STABLES = ("USDT", "USDC", "USD", "BUSD", "VST")  # VST — виртуальные USDT демо-счёта BingX
 
 _rows: list[dict] = []
 _salt: bytes = b""

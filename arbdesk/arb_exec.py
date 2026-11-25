@@ -132,13 +132,18 @@ def _sessions(msg: dict):
     return legs, "", kind
 
 
+def _free_quote(bal, ccy: str) -> float:
+    """Свободно в валюте котировки; на демо BingX USDT называется VST."""
+    return bal.free(ccy) or (bal.free("VST") if ccy == "USDT" else 0.0)
+
+
 async def _caps(legs: dict, kind: str, base: str, quote_ccy: str, buy_ask: float) -> tuple[float, str]:
     """Сколько можно поставить, в валюте котировки. Плечо не угадываем: считаем как 1x."""
     (sb, _), (ss, _) = legs["buy"], legs["sell"]
     bal_b, bal_s = await asyncio.gather(sb.ex.balance(), ss.ex.balance())
-    cap_buy = bal_b.free(quote_ccy)
+    cap_buy = _free_quote(bal_b, quote_ccy)
     if kind == "perp":
-        cap_sell = bal_s.free(quote_ccy)
+        cap_sell = _free_quote(bal_s, quote_ccy)
         why = f"свободно {cap_buy:.2f} / {cap_sell:.2f} {quote_ccy}"
     else:
         cap_sell = bal_s.free(base) * buy_ask  # спот: продаём монеты, которые уже лежат на бирже продажи

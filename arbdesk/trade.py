@@ -158,20 +158,39 @@ def _remember(session: Session, order) -> None:
         pass
 
 
+def _orders_msg(session: Session) -> dict:
+    rows = [_order_row(session, order) for order in session.orders.open_orders]
+    return {"type": "orders", "keyId": session.key_id, "venue": session.venue, "kind": session.kind, "rows": rows}
+
+
+def _positions_msg(session: Session) -> dict:
+    rows = []
+    if session.positions is not None:
+        rows = [_pos_row(session, pos) for pos in session.positions.positions if pos.size]
+    return {"type": "positions", "keyId": session.key_id, "venue": session.venue, "kind": session.kind, "rows": rows}
+
+
+def snapshot() -> list[dict]:
+    """Текущие ордера и позиции всех ключей — новой вкладке браузера (иначе она видит только изменения)."""
+    out = []
+    for session in list(_sessions.values()):
+        try:
+            out += [_orders_msg(session), _positions_msg(session)]
+        except Exception:
+            pass
+    return out
+
+
 async def push_orders(session: Session) -> None:
     from .main import broadcast
 
-    rows = [_order_row(session, order) for order in session.orders.open_orders]
-    await broadcast({"type": "orders", "keyId": session.key_id, "venue": session.venue, "kind": session.kind, "rows": rows})
+    await broadcast(_orders_msg(session))
 
 
 async def push_positions(session: Session) -> None:
     from .main import broadcast
 
-    rows = []
-    if session.positions is not None:
-        rows = [_pos_row(session, pos) for pos in session.positions.positions if pos.size]
-    await broadcast({"type": "positions", "keyId": session.key_id, "venue": session.venue, "kind": session.kind, "rows": rows})
+    await broadcast(_positions_msg(session))
 
 
 async def _ack(socket, ok: bool, text: str) -> None:

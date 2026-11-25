@@ -589,3 +589,21 @@ def test_pair_leg_closed_outside_and_dismiss(monkeypatch, tmp_path):
     row2["status"] = "failed"                       # неудавшаяся связка — просто убрать из журнала
     ok, _ = asyncio.run(arb_exec.dismiss_pair({"id": row2["id"]}))
     assert ok and all(r["id"] != row2["id"] for r in arb_exec.public_rows())
+
+
+def test_bingx_demo_vst_counts_as_usdt(monkeypatch, tmp_path):
+    """Демо BingX держит деньги в VST: связка не должна отказывать «мало средств»."""
+    arb_exec, exa, exb, msg = _pair_setup(monkeypatch, tmp_path)
+    exb._free = {"VST": 1000.0}
+    ok, text = asyncio.run(arb_exec.open_pair(msg))
+    assert ok and "мало средств" not in text
+
+
+def test_new_tab_gets_positions_snapshot(monkeypatch):
+    from types import SimpleNamespace as NS
+    from arbdesk import trade
+    pos = NS(symbol="X/USDT:USDT", side="long", size=2.0, entry_price=1.0, unrealized_pnl=0.1, leverage=5, liquidation_price=None)
+    s = trade.Session({"id": "k", "venue": "bybit", "demo": True}, "perp", None, NS(open_orders=[]), NS(positions=[pos]))
+    monkeypatch.setattr(trade, "_sessions", {("k", "perp"): s})
+    msgs = trade.snapshot()
+    assert [m["type"] for m in msgs] == ["orders", "positions"] and msgs[1]["rows"][0]["size"] == 2.0
