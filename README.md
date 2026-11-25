@@ -108,7 +108,9 @@ UI development: `npm run dev:web` (Vite on :5173, API on :8780).
 | 📊 **L2 order books + tape** | Live WebSocket books and trades for both legs, side by side, with spread and price charts. |
 | ⇄ **Open both legs in one click** | IOC orders on both exchanges with the same coin amount; size is capped by free balance and rounded to both lot steps. |
 | 🩹 **Partial fill handling** | If one leg fills less — *Chase* the lagging leg or *Even out* the filled one. Nothing is sent without your click. |
-| 📒 **Pair trades** | Every pair with entry spread, fills, imbalance, fees and live PnL; close with reduce-only orders. |
+| 📒 **Pair trades** | Every pair with entry spread, fills, imbalance, fees and live PnL; close with reduce-only orders; a leg closed by hand on the exchange is detected and the pair can be marked closed. |
+| 🕯 **Charts for scalping** | Live candles of any coin on any exchange (1m–1d) built from the trade stream, with EMA, SMA, VWAP, Bollinger, volume, RSI and MACD; position, liquidation and order lines right on the chart. |
+| ⚡ **Fast orders** | Market buy/sell, post-only at the best bid/ask, click a book level for a limit, close 25/50/75/100% or at the best limit. *One-click* mode with hotkeys B / S / H / X. |
 | 📔 **Trading diary &amp; PnL** | All your trades — any exchange, any strategy, spot or futures: manual entry, CSV import, reports, equity curve and infographics. |
 | ⭐ **Watchlist alerts** | Star a coin — get a Telegram and browser notification when its net spread crosses your threshold. |
 | 🟢 **Exchange health** | A dot on every exchange: quote age, number of markets, last error. |
@@ -141,6 +143,10 @@ The diary is stored locally in `trades.json` on the `terminal-data` volume — n
 **Spread, net after fees, spread on $1K, lifetime and next funding payout**
 
 <p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/books.png" alt="Arbitrage spread with order books, charts and one-click pair execution" width="100%"></p>
+
+**Charts for scalping: candles, indicators, order book and one-click orders**
+
+<p align="center"><img src="https://raw.githubusercontent.com/byttrade/free-crypto-arbitrage-scanner/main/docs/media/chart-en.png" alt="Crypto scalping chart with EMA, VWAP, RSI, MACD, order book and one-click trading" width="100%"></p>
 
 <table>
   <tr>

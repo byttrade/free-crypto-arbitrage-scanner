@@ -156,3 +156,29 @@ export const VENUE_LABEL: Record<VenueId, string> = {
   htx: "HTX",
   blofin: "BloFin",
 };
+
+export type LiveOrder = {
+  id: string;
+  keyId: string;
+  venue: string;
+  kind: string;
+  demo: boolean;
+  symbol: string;
+  side: string;
+  price: number | null;
+  size: number | null;
+};
+
+export type LivePos = {
+  keyId: string;
+  venue: string;
+  kind: string;
+  demo: boolean;
+  symbol: string;
+  side: string | null;
+  size: number;
+  entry: number | null;
+  pnl: number | null;
+  liq?: number | null;
+  leverage?: number | null;
+};

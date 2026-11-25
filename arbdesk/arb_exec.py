@@ -101,9 +101,23 @@ async def _send(session, symbol: str, side: str, size: float, price: float, redu
                            status=order.status, error=None)
             except Exception:
                 pass
+    except errors.PositionAlreadyClosed:
+        out.update(error="позиции на бирже уже нет", gone=True)  # закрыли вне ArbDesk: повторять нечего
     except Exception as exc:
         out["error"] = str(exc).split("\n")[0][:180]
     return out
+
+
+def _mid(leg: dict, kind: str) -> float | None:
+    q = _quote(leg["venue"], kind, leg["symbol"])
+    return (q["bid"] + q["ask"]) / 2 if q else None
+
+
+def _close_outside(leg: dict, kind: str) -> dict:
+    """Нога закрыта не нами (на бирже вручную, ликвидация): выход ≈ по текущей цене, помечаем как оценку."""
+    qty, _ = _net_qty(leg)
+    return {"side": "sell" if leg["side"] == "buy" else "buy", "filled": max(qty, 0.0), "avg": _mid(leg, kind),
+            "orderId": None, "error": None, "outside": True}
 
 
 def _sessions(msg: dict):
@@ -197,7 +211,7 @@ def pnl(row: dict) -> dict:
 
 
 def public_rows() -> list[dict]:
-    return [{**row, **pnl(row)} for row in reversed(journal()[-200:])]
+    return [{**row, **pnl(row)} for row in reversed(journal()[-200:]) if not row.get("hidden")]
 
 
 async def _push() -> None:
@@ -338,7 +352,7 @@ async def close_pair(msg: dict) -> tuple[bool, str]:
         jobs.append(_send(s, leg["symbol"], side, qty, price, reduce_only=row["kind"] == "perp"))
     results = await asyncio.gather(*jobs)
     for leg, res in zip(row["legs"], results):
-        leg["exit"] = res
+        leg["exit"] = _close_outside(leg, row["kind"]) if res.get("gone") else res
     left = [abs(_net_qty(leg)[0] - (leg["exit"].get("filled") or 0)) for leg in row["legs"]]
     row["status"] = "closed" if all(x <= max(1e-9, _net_qty(l)[0] * 0.01) for x, l in zip(left, row["legs"])) else "closing"
     if row["status"] == "closed":
@@ -351,5 +365,24 @@ async def close_pair(msg: dict) -> tuple[bool, str]:
         row["status"] = _status(row)
     _save()
     await _push()
-    errs = "; ".join(f"{leg['venue']}: {r['error']}" for leg, r in zip(row["legs"], results) if r.get("error"))
+    errs = "; ".join(f"{leg['venue']}: {r['error']}" for leg, r in zip(row["legs"], results) if r.get("error") and not r.get("gone"))
     return row["status"] == "closed", ("связка закрыта" if row["status"] == "closed" else "закрыто не полностью") + (f" ({errs})" if errs else "")
+
+
+@_exclusive
+async def dismiss_pair(msg: dict) -> tuple[bool, str]:
+    """Без ордеров: неудавшуюся связку убрать из журнала, открытую — отметить закрытой вне ArbDesk (выход ≈ рынок)."""
+    row = _row(str(msg.get("id") or ""))
+    if not row or row["status"] == "closed":
+        return False, "связка уже закрыта"
+    if row["status"] == "failed":
+        row["hidden"] = True
+        text = "связка убрана из журнала"
+    else:
+        for leg in row["legs"]:
+            leg["exit"] = _close_outside(leg, row["kind"])
+        row.update(status="closed", closedAt=int(time.time() * 1000), outside=True)
+        text = "связка отмечена закрытой, выход — по текущей цене"
+    _save()
+    await _push()
+    return True, text

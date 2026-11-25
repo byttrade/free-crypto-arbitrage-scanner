@@ -168,7 +168,7 @@ function tickMark(time: Time, type: TickMarkType, lang: Lang) {
   return d.toLocaleTimeString(loc, { hour: "2-digit", minute: "2-digit" });
 }
 
-function chartText(lang: Lang) {
+export function chartText(lang: Lang) {
   return {
     localization: {
       locale: lang === "ru" ? "ru-RU" : "en-GB",
@@ -181,7 +181,7 @@ function chartText(lang: Lang) {
   };
 }
 
-const look = {
+export const look = {
   layout: {
     background: { color: "#111113" },
     textColor: "#c5ced6",
@@ -198,7 +198,7 @@ const look = {
   autoSize: true,
 };
 
-function tickFormat(sample: number) {
+export function tickFormat(sample: number) {
   const abs = Math.abs(sample);
   const precision = abs >= 100 ? 2 : abs >= 1 ? 4 : abs >= 0.01 ? 6 : 8;
   return { type: "price" as const, precision, minMove: 10 ** -precision };

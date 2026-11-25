@@ -655,6 +655,7 @@ def _bars(rows) -> list[dict]:
             "h": float(c.high),
             "l": float(c.low),
             "c": float(c.close),
+            "v": float(c.volume or 0),
         })
     return out
 

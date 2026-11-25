@@ -3,10 +3,18 @@ import asyncio
 import os
 import pathlib
 
+import pytest
+
 from arbdesk import DIST, update, vault
 
 SOURCES = {"BYBIT_BROKER_ID": "builtin", "BINANCE_BROKER_ID_FUTURES": "none"}
 CALM = lambda: None  # noqa: E731
+
+
+@pytest.fixture(autouse=True)
+def _installed_0_1_0(monkeypatch):
+    """Фейковый мир считает установленной 0.1.0 — диапазон обновлений от неё, а не от текущей версии пакета."""
+    monkeypatch.setitem(update.RANGES, DIST, ((0, 1, 0), (1,)))
 
 
 class World:

@@ -13,7 +13,7 @@ requires-python = ">=3.11"
 authors = [{ name = "BYTtrade" }]
 keywords = ["crypto", "arbitrage", "arbitrage-scanner", "crypto-arbitrage", "funding-rate", "pair-trading",
             "trading-journal", "pnl", "binance", "bybit", "okx", "order-book", "trading-terminal",
-            "arbitrage-bot", "spread", "free"]
+            "arbitrage-bot", "spread", "scalping", "crypto-chart", "technical-indicators", "free"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",

@@ -7,6 +7,7 @@ import json
 import time
 
 import pytest
+from bytx import errors
 from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -497,3 +498,94 @@ def test_pair_double_close_sends_once(monkeypatch, tmp_path):
     res = asyncio.run(twice())
     assert (len(exa.sent) - n[0], len(exb.sent) - n[1]) == (1, 1)
     assert res[0][0] and not res[1][0] and row["status"] == "closed"
+
+
+def _close_setup(monkeypatch, pos):
+    from types import SimpleNamespace as NS
+    from arbdesk import trade
+    sent, acks = [], []
+
+    class Ex:
+        async def ws_place_order(self, symbol, side, **k):
+            await asyncio.sleep(0.01)
+            sent.append((side, k))
+            return NS(side=side, symbol=symbol, price=k.get("price"), id="1", raw={})
+    s = trade.Session({"id": "k", "venue": "bybit", "demo": True}, "perp", Ex(), None, NS(get=lambda *a: pos))
+    monkeypatch.setitem(trade._sessions, ("k", "perp"), s)
+
+    async def ack(_sock, ok, text):
+        acks.append((ok, text))
+
+    async def nop(*a):
+        return None
+    monkeypatch.setattr(trade, "_ack", ack)
+    monkeypatch.setattr(trade, "push_orders", nop)
+    monkeypatch.setattr(trade, "push_positions", nop)
+    monkeypatch.setattr(trade, "_remember", lambda *a: None)
+    monkeypatch.setattr(trade, "_reconcile", nop)
+    from arbdesk import integrity
+    monkeypatch.setattr(integrity, "gate", lambda *a: asyncio.sleep(0, result=None))
+    return trade, sent, acks, {"venue": "bybit", "kind": "perp", "keyId": "k", "symbol": "X/USDT:USDT"}
+
+
+def test_partial_close_once_and_gone(monkeypatch):
+    from types import SimpleNamespace as NS
+    pos = NS(size=2.0, side="long", contracts=None)
+    trade, sent, acks, base = _close_setup(monkeypatch, pos)
+
+    async def twice():
+        await asyncio.gather(trade.handle(None, {**base, "type": "close", "fraction": 0.5}),
+                             trade.handle(None, {**base, "type": "close", "fraction": 0.5}))
+    asyncio.run(twice())
+    assert len(sent) == 1 and sent[0][0] == "sell" and sent[0][1]["size"] == 1.0 and sent[0][1]["reduce_only"]
+    assert sorted(ok for ok, _ in acks) == [False, True] and any("50%" in t for _, t in acks)
+    asyncio.run(trade.handle(None, {**base, "type": "close", "fraction": 1.5}))
+    assert acks[-1][0] is False and len(sent) == 1                          # доля > 100% не уходит
+    asyncio.run(trade.handle(None, {**base, "type": "close", "orderType": "limit", "price": 101, "fraction": 0.25}))
+    assert sent[-1][1] == {"reduce_only": True, "size": 0.5, "price": 101.0, "type": "limit"}
+
+
+def test_close_reports_position_gone(monkeypatch):
+    from types import SimpleNamespace as NS
+    pos = NS(size=1.0, side="short", contracts=None)
+    trade, sent, acks, base = _close_setup(monkeypatch, pos)
+
+    class Gone(type(trade._sessions[("k", "perp")].ex)):
+        async def ws_place_order(self, symbol, side, **k):
+            raise errors.PositionAlreadyClosed("110017")
+    trade._sessions[("k", "perp")].ex = Gone()
+    asyncio.run(trade.handle(None, {**base, "type": "close"}))
+    assert acks[-1] == (False, "позиции на бирже уже нет")
+
+
+def test_market_order_needs_no_price(monkeypatch):
+    from types import SimpleNamespace as NS
+    trade, sent, acks, base = _close_setup(monkeypatch, NS(size=0, side=None, contracts=None))
+    asyncio.run(trade.handle(None, {**base, "type": "place", "side": "buy", "orderType": "market", "notional": 50}))
+    assert sent[-1][1] == {"notional": 50.0, "type": "market"} and acks[-1][0]
+    asyncio.run(trade.handle(None, {**base, "type": "place", "side": "buy", "notional": 50}))
+    assert acks[-1] == (False, "нужны сторона, цена и сумма") and len(sent) == 1
+
+
+def test_pair_leg_closed_outside_and_dismiss(monkeypatch, tmp_path):
+    arb_exec, exa, exb, msg = _pair_setup(monkeypatch, tmp_path)
+    asyncio.run(arb_exec.open_pair(msg))
+    row = arb_exec.journal()[-1]
+
+    async def gone(*a, **k):
+        raise errors.PositionAlreadyClosed("closed by hand")
+    exb.ws_place_order = gone                      # ногу продажи закрыли руками на бирже
+    ok, text = asyncio.run(arb_exec.close_pair({"id": row["id"]}))
+    sell = next(l for l in row["legs"] if l["role"] == "sell")
+    assert ok and row["status"] == "closed" and sell["exit"]["outside"] and sell["exit"]["avg"] == 101.5
+    assert arb_exec.pnl(row)["pnl"] is not None and "ошиб" not in text
+
+    asyncio.run(arb_exec.open_pair(msg))           # вторая связка: обе ноги закрыли вне терминала
+    row2 = arb_exec.journal()[-1]
+    n = len(exa.sent)
+    ok, _ = asyncio.run(arb_exec.dismiss_pair({"id": row2["id"]}))
+    assert ok and row2["status"] == "closed" and row2["outside"] and len(exa.sent) == n   # без ордеров
+    assert all(l["exit"]["outside"] for l in row2["legs"])
+    row2["status"] = "failed"                       # неудавшаяся связка — просто убрать из журнала
+    ok, _ = asyncio.run(arb_exec.dismiss_pair({"id": row2["id"]}))
+    assert ok and all(r["id"] != row2["id"] for r in arb_exec.public_rows())

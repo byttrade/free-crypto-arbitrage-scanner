@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { MiniCharts, SpreadChart } from "./Chart";
 import { Book, Tape, Venue, price, type LegPick } from "./Dom";
-import { useI18n } from "./i18n";
+import { srvText, useI18n } from "./i18n";
 import { Diary } from "./Diary";
 import { Updates } from "./Updates";
 import { Logout } from "./Auth";
 import { Keys, type KeyRow } from "./Keys";
 import { Tabs } from "./Tabs";
+import { Scalp, type ChartTarget } from "./Scalp";
 import type {
   AlertEvent,
   CrossSpread,
@@ -18,14 +19,14 @@ import type {
   TapeTrade,
   VenueId,
 } from "./types";
-import { VENUE_LABEL } from "./types";
+import { VENUE_LABEL, type LiveOrder, type LivePos } from "./types";
 
-type Tab = "cross" | "pairs" | "funding" | "alerts" | "journal" | "diary";
+type Tab = "cross" | "pairs" | "funding" | "chart" | "alerts" | "journal" | "diary";
 
-type JLeg = { role: "buy" | "sell"; venue: VenueId; symbol: string; side: string; filled: number; avg: number | null; error: string | null; demo: boolean };
+type JLeg = { role: "buy" | "sell"; venue: VenueId; symbol: string; side: string; filled: number; avg: number | null; error: string | null; demo: boolean; keyId: string; exit?: { outside?: boolean } | null };
 type JRow = {
   id: string; ts: number; kind: MarketKind; base: string; quote: string; notional: number; status: string;
-  legs: JLeg[]; qtyBuy: number; qtySell: number; imbalance: number; entrySpreadPct: number | null; pnl: number | null; fees: number; tolPct: number;
+  legs: JLeg[]; qtyBuy: number; qtySell: number; imbalance: number; entrySpreadPct: number | null; pnl: number | null; fees: number; tolPct: number; outside?: boolean;
 };
 
 type CoinRow = { venue: VenueId; symbol: string; bid: number; ask: number; volumeUsd: number; ageSec: number; ws: boolean; taker: number; odd?: boolean };
@@ -305,32 +306,23 @@ function legFund(
   return { rate: rate ?? known?.fundingPct, hours: hours ?? known?.intervalH };
 }
 
-type LiveOrder = {
-  id: string;
-  keyId: string;
-  venue: string;
-  kind: string;
-  demo: boolean;
-  symbol: string;
-  side: string;
-  price: number | null;
-  size: number | null;
-};
 
-type LivePos = {
-  keyId: string;
-  venue: string;
-  kind: string;
-  demo: boolean;
-  symbol: string;
-  side: string | null;
-  size: number;
-  entry: number | null;
-  pnl: number | null;
-};
 
 function replaceSlice<T extends { keyId: string; kind: string }>(prev: T[], keyId: string, kind: string, rows: T[]) {
   return [...prev.filter((row) => row.keyId !== keyId || row.kind !== kind), ...rows];
+}
+
+export function CloseButtons({ row, busy, onClose }: { row: LivePos; busy: boolean; onClose: (row: LivePos, fraction?: number) => void }) {
+  const { t } = useI18n();
+  if (busy) return <button type="button" className="mini sell" disabled>…</button>;
+  return (
+    <span className="close-btns" title={t("blotCloseHint")}>
+      {[0.25, 0.5].map((f) => (
+        <button key={f} type="button" className="mini" onClick={() => onClose(row, f)}>{f * 100}%</button>
+      ))}
+      <button type="button" className="mini sell" onClick={() => onClose(row, 1)}>{t("blotClose")}</button>
+    </span>
+  );
 }
 
 function OrderEdit({
@@ -446,6 +438,22 @@ function researchText(status: string, t: ReturnType<typeof useI18n>["t"]) {
 export function App() {
   const { lang, setLang, t } = useI18n();
   const [tab, setTab] = useState<Tab>("cross");
+  const [chartTarget, setChartTarget] = useState<ChartTarget>(() => {
+    try {
+      return { venue: "binance", symbol: "BTC/USDT:USDT", kind: "perp", base: "BTC", ...JSON.parse(localStorage.getItem("arb.target") || "{}") };
+    } catch {
+      return { venue: "binance", symbol: "BTC/USDT:USDT", kind: "perp", base: "BTC" };
+    }
+  });
+  const openChart = useCallback((next: ChartTarget) => {
+    setChartTarget(next);
+    try {
+      localStorage.setItem("arb.target", JSON.stringify(next));
+    } catch {
+      /* без хранилища — до перезагрузки */
+    }
+    setTab("chart");
+  }, []);
   const spreadSortState = useSort();
   const pairSortState = useSort();
   const fundSortState = useSort();
@@ -527,6 +535,7 @@ export function App() {
   const [positions, setPositions] = useState<LivePos[]>([]);
   // Закрытие отправлено, ответа ещё нет: кнопка заблокирована, чтобы двойной клик не ушёл вторым ордером.
   const [closing, setClosing] = useState<Set<string>>(new Set());
+  const posSeen = useRef(new Set<string>());
   const [tapeH, setTapeH] = useState(156);
   const [chartH, setChartH] = useState(220);
   const [rightW, setRightW] = useState(() => Math.round(window.innerWidth * 0.5));
@@ -640,6 +649,7 @@ export function App() {
           setOrders((prev) => replaceSlice(prev, msg.keyId!, msg.kind!, (msg.rows || []) as LiveOrder[]));
         }
         if (msg.type === "positions" && msg.keyId && msg.kind) {
+          posSeen.current.add(`${msg.keyId}|${msg.kind}`);
           setPositions((prev) => replaceSlice(prev, msg.keyId!, msg.kind!, (msg.rows || []) as LivePos[]));
         }
         if (msg.type === "order_ack") setClosing(new Set());
@@ -691,10 +701,12 @@ export function App() {
   }, [selSpread, selPair]);
 
   useEffect(() => {
-    watchRef.current = watch;
+    // На вкладке «Графики» подписываемся и на стакан/ленту выбранной монеты (сервер держит до 4 потоков на окно).
+    const subs = tab === "chart" ? [...watch, { venue: chartTarget.venue, symbol: chartTarget.symbol, kind: chartTarget.kind }] : watch;
+    watchRef.current = subs;
     const ws = wsRef.current;
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "books", books: watch }));
-  }, [watch, wsOk]);
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "books", books: subs }));
+  }, [watch, wsOk, tab, chartTarget]);
 
   useEffect(() => {
     if (!selPair) {
@@ -850,6 +862,15 @@ export function App() {
       sell: { venue: liveSpread.sellVenue, symbol: liveSpread.sellSymbol, keyId: ks.id },
     });
   };
+  // Нога перпа, по ключу которой позиции уже пришли, а этой нет: закрыли на бирже вручную или ликвидировали.
+  const legGone = (row: JRow, l: JLeg) => row.kind === "perp" && posSeen.current.has(`${l.keyId}|perp`)
+    && !positions.some((p) => p.keyId === l.keyId && p.symbol === l.symbol && p.size > 0
+      && p.side === (l.side === "buy" ? "long" : "short"));
+  const dismissPair = (row: JRow) => {
+    const failed = row.status === "failed";
+    if (!window.confirm(t(failed ? "jDropAsk" : "jMarkAsk", { pair: `${row.base}/${row.quote} ${row.kind}` }))) return;
+    sendTrade({ type: "pair_dismiss", id: row.id });
+  };
   const pairAct = (row: JRow, type: "pair_fix" | "pair_close", action?: "chase" | "unwind") => {
     const demo = row.legs.every((l) => l.demo);
     if (type === "pair_close") {
@@ -901,13 +922,17 @@ export function App() {
   const cancelOrder = (row: LiveOrder) => {
     sendTrade({ type: "cancel", keyId: row.keyId, venue: row.venue, kind: row.kind, symbol: row.symbol, orderId: row.id });
   };
-  const closePos = (row: LivePos) => {
-    const what = t("blotCloseAsk", { side: row.side || "", symbol: row.symbol, size: row.size, venue: VENUE_LABEL[row.venue as VenueId] || row.venue });
-    if (!(row.demo ? window.confirm(what) : liveOk(false, what))) return;
+  const closePos = (row: LivePos, fraction = 1, limitPx?: number, quick = false) => {
+    const what = t(limitPx ? "blotCloseLimitAsk" : "blotCloseAsk", {
+      side: row.side || "", symbol: row.symbol, size: +(row.size * fraction).toPrecision(6), pct: fraction * 100,
+      venue: VENUE_LABEL[row.venue as VenueId] || row.venue, px: limitPx ? price(limitPx) : "",
+    });
+    if (!quick && !(row.demo ? window.confirm(what) : liveOk(false, what))) return;
     setClosing((c) => new Set(c).add(`pos:${row.keyId}|${row.symbol}|${row.side}`));
     sendTrade({
-      type: "close", keyId: row.keyId, confirmLive: !row.demo,
+      type: "close", keyId: row.keyId, confirmLive: !row.demo, fraction,
       venue: row.venue, kind: row.kind, symbol: row.symbol, side: row.side,
+      ...(limitPx ? { orderType: "limit", price: limitPx } : {}),
     });
   };
   const dragTape = (e: ReactPointerEvent) => {
@@ -978,6 +1003,7 @@ export function App() {
             { id: "cross", label: t("spreads") },
             { id: "pairs", label: t("pairs") },
             { id: "funding", label: t("funding") },
+            { id: "chart", label: t("chart") },
             { id: "alerts", label: t("alerts") },
             { id: "journal", label: t("journal") },
             { id: "diary", label: t("diary") },
@@ -1039,7 +1065,22 @@ export function App() {
         </div>
       </header>
 
-      {tab === "diary" ? <Diary /> : (
+      {tab === "diary" ? <Diary /> : tab === "chart" ? (
+        <Scalp
+          target={chartTarget}
+          onTarget={openChart}
+          keys={keys}
+          positions={positions}
+          orders={orders}
+          books={books}
+          tapes={tapes}
+          closing={closing}
+          send={sendTrade}
+          liveOk={liveOk}
+          onClose={closePos}
+          onCancel={cancelOrder}
+        />
+      ) : (
       <div className="main">
         <div className={tab === "pairs" ? "left" : "left full"}>
           <FilterBar tab={tab} f={filters} set={patchFilters} vstat={vstat} />
@@ -1307,13 +1348,18 @@ export function App() {
                         {r.legs.map((l) => (
                           <div key={l.role} title={l.error || ""} className={l.error ? "neg" : ""}>
                             <Venue id={l.venue} /> {l.side} {l.filled.toPrecision(4)}{l.avg ? ` @ ${price(l.avg)}` : ""}
+                            {(r.status === "open" || r.status === "partial") && legGone(r, l) && (
+                              <span className="gone" title={t("jGoneHint")}> · {t("jGone")}</span>
+                            )}
                           </div>
                         ))}
                       </td>
                       <td>{Math.min(r.qtyBuy, r.qtySell).toPrecision(4)}{Math.abs(r.imbalance) > 0 ? <div className="neg">Δ {r.imbalance.toPrecision(3)}</div> : null}</td>
                       <td>{r.entrySpreadPct == null ? "—" : `${r.entrySpreadPct.toFixed(3)}%`}</td>
                       <td className={`jst ${r.status}`}>{t(({ open: "stOpen", partial: "stPartial", closed: "stClosed", failed: "stFailed", closing: "stClosing" } as const)[r.status as "open"] || "stOpen")}</td>
-                      <td className={r.pnl == null ? "muted" : r.pnl >= 0 ? "pos" : "neg"}>{r.pnl == null ? "—" : `${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)}`}</td>
+                      <td className={r.pnl == null ? "muted" : r.pnl >= 0 ? "pos" : "neg"} title={r.legs.some((l) => l.exit?.outside) ? t("jApproxHint") : undefined}>
+                        {r.pnl == null ? "—" : `${r.legs.some((l) => l.exit?.outside) ? "≈ " : ""}${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)}`}
+                      </td>
                       <td className="acts">
                         {r.status === "partial" && (
                           <>
@@ -1323,6 +1369,12 @@ export function App() {
                         )}
                         {(r.status === "open" || r.status === "partial") && (
                           <button type="button" className="mini sell" title={t("jCloseHint")} disabled={closing.has(`pair:${r.id}`)} onClick={() => pairAct(r, "pair_close")}>{closing.has(`pair:${r.id}`) ? "…" : t("jClose")}</button>
+                        )}
+                        {(r.status === "open" || r.status === "partial") && (
+                          <button type="button" className={`mini${r.legs.some((l) => legGone(r, l)) ? " warn" : ""}`} title={t("jMarkHint")} onClick={() => dismissPair(r)}>{t("jMark")}</button>
+                        )}
+                        {r.status === "failed" && (
+                          <button type="button" className="mini" title={t("jDropHint")} onClick={() => dismissPair(r)}>{t("jDrop")}</button>
                         )}
                       </td>
                     </tr>
@@ -1432,12 +1484,15 @@ export function App() {
                   <div className="blot-row" key={`${row.venue}|${row.symbol}|${row.side}`}>
                     <b>{row.demo ? "demo" : "live"}</b>
                     <Venue id={row.venue as VenueId} />
-                    <span>{row.symbol}</span>
+                    <button type="button" className="link" title={t("chOpenChart")}
+                      onClick={() => openChart({ venue: row.venue as VenueId, symbol: row.symbol, kind: row.kind as MarketKind, base: row.symbol.split("/")[0] })}>
+                      {row.symbol}
+                    </button>
                     <span className={row.side === "long" ? "pos" : "neg"}>{row.side}</span>
                     <span>{row.size}</span>
                     {row.entry != null && <span className="muted">@ {price(row.entry)}</span>}
                     <span className={(row.pnl || 0) >= 0 ? "pos" : "neg"}>{row.pnl == null ? "—" : row.pnl.toFixed(2)}</span>
-                    <button type="button" className="mini sell" title={t("blotCloseHint")} disabled={closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`)} onClick={() => closePos(row)}>{closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`) ? "…" : t("blotClose")}</button>
+                    <CloseButtons row={row} busy={closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`)} onClose={closePos} />
                   </div>
                 ))}
               </div>
@@ -1532,7 +1587,7 @@ export function App() {
               <path d="M12 16.2h.01" />
             </svg>
           </span>
-          <span>{notice || toastText}</span>
+          <span>{notice ? srvText(notice, lang) : toastText}</span>
         </div>
       )}
       <footer className="foot">

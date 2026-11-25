@@ -147,6 +147,7 @@ def _pos_row(session: Session, pos) -> dict:
         "entry": pos.entry_price,
         "pnl": pos.unrealized_pnl,
         "leverage": pos.leverage,
+        "liq": pos.liquidation_price,
     }
 
 
@@ -182,6 +183,9 @@ async def _ack(socket, ok: bool, text: str) -> None:
         pass
 
 
+_closing: set[tuple] = set()  # (ключ, символ, сторона): закрытие в пути — второе не отправляем
+
+
 def _num(value) -> float | None:
     if value in (None, ""):
         return None
@@ -210,16 +214,22 @@ async def handle(socket, msg: dict) -> None:
         ex = session.ex
         if action == "place":
             side = msg.get("side")
+            market = msg.get("orderType") == "market"
             price = _num(msg.get("price")) or 0
             notional = _num(msg.get("notional")) or 0
-            if side not in ("buy", "sell") or price <= 0 or notional <= 0:
+            if side not in ("buy", "sell") or notional <= 0 or (price <= 0 and not market):
                 await _ack(socket, False, "нужны сторона, цена и сумма")
                 return
-            order = await ex.ws_place_order(symbol, side, notional=notional, price=price, type="limit")
+            if market:
+                order = await ex.ws_place_order(symbol, side, notional=notional, type="market")
+            else:
+                order = await ex.ws_place_order(symbol, side, notional=notional, price=price, type="limit",
+                                                post_only=msg.get("postOnly") is True)
             integrity.after_order(session, order)
             _remember(session, order)
             mark = "demo" if session.demo else "live"
-            await _ack(socket, True, f"{mark}: {order.side} {order.symbol} @ {order.price}")
+            at = "market" if market else order.price
+            await _ack(socket, True, f"{mark}: {order.side} {order.symbol} @ {at}")
         elif action == "amend":
             order = await ex.ws_amend_order(
                 symbol,
@@ -242,17 +252,37 @@ async def handle(socket, msg: dict) -> None:
             if pos is None or not pos.size:
                 await _ack(socket, False, "позиции нет")
                 return
-            side = "sell" if pos.side == "long" else "buy"
-            if pos.contracts:
-                order = await ex.ws_place_order(symbol, side, contracts=pos.contracts, reduce_only=True)
-            else:
-                order = await ex.ws_place_order(symbol, side, size=pos.size, reduce_only=True)
+            part = _num(msg.get("fraction")) or 1.0
+            price = _num(msg.get("price"))
+            if not 0 < part <= 1 or (msg.get("orderType") == "limit" and not price):
+                await _ack(socket, False, "доля закрытия от 0 до 100%, для лимитки нужна цена")
+                return
+            busy = (session.key_id, symbol, pos.side)
+            if busy in _closing:
+                await _ack(socket, False, "закрытие уже отправлено — дождитесь ответа")
+                return
+            _closing.add(busy)
+            try:
+                side = "sell" if pos.side == "long" else "buy"
+                how = {"price": price, "type": "limit"} if msg.get("orderType") == "limit" else {"type": "market"}
+                # Шаг лота биржа округлит вниз; 100% — ровно вся позиция, без округления доли.
+                amount = {"contracts": pos.contracts * part} if pos.contracts else {"size": pos.size * part}
+                order = await ex.ws_place_order(symbol, side, reduce_only=True, **amount, **how)
+            finally:
+                _closing.discard(busy)
             _remember(session, order)
-            await _ack(socket, True, "закрытие отправлено")
+            pct = f"{part * 100:g}%"
+            await _ack(socket, True, f"закрытие {pct} отправлено" + (f" лимиткой @ {order.price}" if how["type"] == "limit" else ""))
         else:
             return
         await push_orders(session)
         await push_positions(session)
+    except errors.PositionAlreadyClosed:
+        await _ack(socket, False, "позиции на бирже уже нет")
+        if session is not None:
+            asyncio.create_task(_reconcile(session))
+    except errors.OrderTooSmall:
+        await _ack(socket, False, "меньше минимального лота биржи — закройте большую долю")
     except errors.OrderStatusUnknown as exc:
         # Ордер мог дойти: не повторяем, сверяем по client_id через трекер.
         cid = getattr(exc, "client_order_id", None) or "—"

@@ -350,7 +350,8 @@ async def _trade(socket: WebSocket, msg: dict) -> None:
 
 
 async def _pair(socket: WebSocket, msg: dict) -> None:
-    fn = {"pair_open": arb_exec.open_pair, "pair_fix": arb_exec.fix_pair, "pair_close": arb_exec.close_pair}[msg["type"]]
+    fn = {"pair_open": arb_exec.open_pair, "pair_fix": arb_exec.fix_pair, "pair_close": arb_exec.close_pair,
+          "pair_dismiss": arb_exec.dismiss_pair}[msg["type"]]
     try:
         if update.updating:
             ok, text = False, UPDATING
@@ -444,7 +445,7 @@ async def ws(socket: WebSocket):
                 await socket.send_text(json.dumps({"type": "funding", "rows": view.funding(build_funding(), v)}, default=float))
             elif msg.get("type") in ("place", "amend", "cancel", "close"):
                 asyncio.create_task(_trade(socket, msg))
-            elif msg.get("type") in ("pair_open", "pair_fix", "pair_close"):
+            elif msg.get("type") in ("pair_open", "pair_fix", "pair_close", "pair_dismiss"):
                 asyncio.create_task(_pair(socket, msg))
     except WebSocketDisconnect:
         pass

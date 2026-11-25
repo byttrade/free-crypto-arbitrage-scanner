@@ -199,7 +199,9 @@ def _pair_trades() -> list[dict]:
             "market": row["kind"], "side": "long", "qty": min(p["qtyBuy"], p["qtySell"]),
             "entry": legs["buy"].get("avg") or 0, "exit": (legs["buy"].get("exit") or {}).get("avg"),
             "fees": p["fees"], "funding": 0.0, "pnl": p["pnl"], "leverage": None, "strategy": "spread",
-            "tags": ["demo"] if all(leg.get("demo") for leg in row["legs"]) else [], "note": "",
+            "tags": (["demo"] if all(leg.get("demo") for leg in row["legs"]) else [])
+            + (["approx"] if any((leg.get("exit") or {}).get("outside") for leg in row["legs"]) else []),
+            "note": "exit ≈ market: closed outside ArbDesk" if any((leg.get("exit") or {}).get("outside") for leg in row["legs"]) else "",
             "source": "terminal",
         })
     return out
