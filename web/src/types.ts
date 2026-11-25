@@ -182,4 +182,8 @@ export type LivePos = {
   pnl: number | null;
   liq?: number | null;
   leverage?: number | null;
+  mark?: number | null;
+  taker?: number | null; // доля, 0.0006 = 0.06%
+  tp?: number | null;
+  sl?: number | null;
 };

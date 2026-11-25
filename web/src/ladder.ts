@@ -43,7 +43,10 @@ export function tickText(n: number, tick: number | null): string | null {
   return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
-const KEEP_MAX = 200; // на сколько тиков сетка может вырасти ради своей дальней лимитки
+const KEEP_MAX = 200;
+const EPS = 1e-7;
+/** Номер строки сетки: ask и продажа — вверх, bid и покупка — вниз (при группировке тиков, как в DOM). */
+const slot = (px: number, step: number, up: boolean) => (up ? Math.ceil(px / step - EPS) : Math.floor(px / step + EPS)); // на сколько тиков сетка может вырасти ради своей дальней лимитки
 
 /** n тиков вверх от лучшего ask и n вниз от лучшего bid; пустой тик — строка с нулевым объёмом.
  *  keep — цены своих ордеров: сетка растягивается, чтобы они были видны (не больше KEEP_MAX тиков сверх n). */
@@ -57,11 +60,11 @@ export function tickLadder(book: Book, tick: number | null, n: number, keep: num
     if (!side.length) return [];
     const sizes = new Map<number, number>();
     for (const l of side) {
-      const i = Math.round(l.price / tick);
+      const i = slot(l.price, tick, dir === 1);
       sizes.set(i, (sizes.get(i) || 0) + l.size);
     }
-    const start = Math.round(side[0].price / tick);
-    const reach = keep.reduce((m, px) => Math.max(m, (Math.round(px / tick) - start) * dir + 1), n);
+    const start = slot(side[0].price, tick, dir === 1);
+    const reach = keep.reduce((m, px) => Math.max(m, (slot(px, tick, dir === 1) - start) * dir + 1), n);
     return Array.from({ length: Math.min(reach, n + KEEP_MAX) }, (_, k) => {
       const i = start + dir * k;
       return { i, price: Number((i * tick).toFixed(dec)), size: sizes.get(i) || 0 };
@@ -70,24 +73,27 @@ export function tickLadder(book: Book, tick: number | null, n: number, keep: num
   return { asks: fill(book.asks, 1), bids: fill(book.bids, -1) };
 }
 
-/** Ордер на строке: тот же тик (или та же цена, когда сетки нет). */
-export function onRung(r: Rung, px: number, tick: number | null): boolean {
-  return tick ? Math.round(px / tick) === r.i : Math.abs(px - r.price) <= r.price * 1e-9;
+/** Ордер на строке: та же ячейка сетки (продажа — вверх, покупка — вниз) или та же цена, когда сетки нет. */
+export function onRung(r: Rung, px: number, tick: number | null, side: string = "buy"): boolean {
+  return tick ? slot(px, tick, side === "sell") === r.i : Math.abs(px - r.price) <= r.price * 1e-9;
 }
 
-/** PnL по стакану: лонг закрывается по bid, шорт по ask; в валюте котировки. */
-export function livePnl(
-  p: { side: string | null; size: number; entry: number | null },
+export type Pnl = { net: number; gross: number; fee: number; px: number };
+
+/** PnL позиции в валюте котировки, за вычетом taker на вход и выход.
+ *  Цена выхода: лонг — лучший bid, шорт — лучший ask. На demo стакан — живого рынка, а цены у demo свои:
+ *  там берём цену маркировки с биржи (её нет — PnL биржи). */
+export function pnlOf(
+  p: { side: string | null; size: number; entry: number | null; demo?: boolean; mark?: number | null; pnl?: number | null; taker?: number | null },
   book: { bids: Level[]; asks: Level[] } | null | undefined,
-): number | null {
-  if (!book || p.entry == null || !p.size) return null;
-  if (p.side === "long") {
-    const bid = book.bids[0]?.price;
-    return bid ? (bid - p.entry) * p.size : null;
-  }
-  if (p.side === "short") {
-    const ask = book.asks[0]?.price;
-    return ask ? (p.entry - ask) * p.size : null;
-  }
-  return null;
+): Pnl | null {
+  if (p.entry == null || !p.size || (p.side !== "long" && p.side !== "short")) return null;
+  const top = p.side === "long" ? book?.bids[0]?.price : book?.asks[0]?.price;
+  const px = p.demo ? p.mark || null : top || p.mark || null;
+  const dir = p.side === "long" ? 1 : -1;
+  const gross = px ? (px - p.entry) * p.size * dir : p.pnl;
+  if (gross == null) return null;
+  const exit = px || p.entry;
+  const fee = (p.taker || 0) * p.size * (p.entry + exit);
+  return { net: gross - fee, gross, fee, px: exit };
 }

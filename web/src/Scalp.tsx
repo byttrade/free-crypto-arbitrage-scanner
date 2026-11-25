@@ -4,10 +4,10 @@ import {
   createChart, CrosshairMode, LineStyle,
   type IChartApi, type IPriceLine, type ISeriesApi, type LogicalRange, type MouseEventParams, type Time, type UTCTimestamp,
 } from "lightweight-charts";
-import { bookTick, livePnl, onRung, tickLadder, tickText, type Rung } from "./ladder";
+import { bookTick, onRung, pnlOf, tickLadder, tickText, type Rung } from "./ladder";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chartText, look, tickFormat } from "./Chart";
-import { price as fmt, QUOTE_CHIPS, Venue } from "./Dom";
+import { GroupPick, PnlText, price as fmt, QUOTE_CHIPS, Venue } from "./Dom";
 import { useI18n } from "./i18n";
 import { applyTrade, bollinger, ema, macd, mergeLatest, rsi, sma, vwap, type Bar, type Val } from "./indicators";
 import type { KeyRow } from "./Keys";
@@ -49,6 +49,37 @@ const qty = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}m` : n >= 1e3 ? `
 const line = (bars: Bar[], vals: Val[]) =>
   vals.flatMap((v, i) => (v === null || !Number.isFinite(v) ? [] : [{ time: (bars[i].t / 1000) as UTCTimestamp, value: v }]));
 
+/** Тейк и стоп позиции: поле цены и кнопка на каждую ногу, × снимает стоящую. */
+function TpSl({ p, onSet, onClear }: {
+  p: LivePos;
+  onSet: (leg: "tp" | "sl", px: number) => void;
+  onClear: (leg: "tp" | "sl") => void;
+}) {
+  const { t } = useI18n();
+  const [vals, setVals] = useState({ tp: "", sl: "" });
+  // Каждое поле — со своей ногой: пришёл новый TP — не стираем набранный, но не отправленный SL.
+  useEffect(() => setVals((x) => ({ ...x, tp: p.tp ? String(p.tp) : "" })), [p.tp]);
+  useEffect(() => setVals((x) => ({ ...x, sl: p.sl ? String(p.sl) : "" })), [p.sl]);
+  return (
+    <div className="tpsl" title={t("tpslHint")}>
+      {(["tp", "sl"] as const).map((leg) => {
+        const v = Number(vals[leg]);
+        const cur = p[leg];
+        return (
+          <div key={leg} className={`tpsl-row ${leg}`}>
+            <b>{leg.toUpperCase()}</b>
+            <input value={vals[leg]} inputMode="decimal" placeholder="—" aria-label={leg.toUpperCase()}
+              onChange={(e) => setVals((x) => ({ ...x, [leg]: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && v > 0 && onSet(leg, v)} />
+            <button type="button" className="mini" disabled={!(v > 0) || v === cur} onClick={() => onSet(leg, v)}>{t("tpslSet")}</button>
+            {cur ? <button type="button" className="mini sell" title={t("tpslClear", { leg: leg.toUpperCase() })} onClick={() => onClear(leg)}>×</button> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 async function fetchBars(t: ChartTarget, tf: Tf, limit: number, until?: number): Promise<Bar[]> {
   const q = new URLSearchParams({ venue: t.venue, symbol: t.symbol, kind: t.kind, tf, limit: String(limit) });
   if (until) q.set("until", String(until));
@@ -57,7 +88,8 @@ async function fetchBars(t: ChartTarget, tf: Tf, limit: number, until?: number):
 }
 
 export function Scalp({
-  target, onTarget, keys, positions, orders, books, tapes, closing, send, liveOk, onClose, onCancel,
+  target, onTarget, keys, positions, orders, books, tapes, closing, send, liveOk, onClose, onCancel, onAmend,
+  group, onGroup, sound, onSound,
 }: {
   target: ChartTarget;
   onTarget: (t: ChartTarget) => void;
@@ -71,6 +103,11 @@ export function Scalp({
   liveOk: (demo: boolean, text: string) => boolean;
   onClose: (row: LivePos, fraction?: number, limitPx?: number) => void;
   onCancel: (row: LiveOrder) => void;
+  onAmend: (row: LiveOrder, price: number) => void;
+  group: number;
+  onGroup: (n: number) => void;
+  sound: boolean;
+  onSound: (on: boolean) => void;
 }) {
   const { t, lang } = useI18n();
   const [tf, setTf] = useState<Tf>(() => load("arb.chart", { tf: "1m" as Tf }).tf);
@@ -240,9 +277,11 @@ export function Scalp({
     const pl = (p: number, color: string, title: string, style = LineStyle.Solid) =>
       priceLines.current.push(c.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }));
     myPos.forEach((p) => {
-      const pnl = livePnl(p, book) ?? p.pnl;
+      const pnl = pnlOf(p, book)?.net;
       if (p.entry) pl(p.entry, p.side === "long" ? UP : DOWN, `${p.side} ${p.size}${pnl == null ? "" : ` ${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`}`);
       if (p.liq && p.liq > 0) pl(p.liq, "#f5a524", "liq", LineStyle.Dotted);
+      if (p.tp) pl(p.tp, UP, "TP", LineStyle.LargeDashed);
+      if (p.sl) pl(p.sl, DOWN, "SL", LineStyle.LargeDashed);
     });
     myOrders.forEach((o) => o.price && pl(o.price, o.side === "buy" ? UP : DOWN, `${o.side} ${o.size ?? ""}`, LineStyle.Dashed));
   }, [myPos, myOrders, book, gen]);
@@ -274,12 +313,13 @@ export function Scalp({
     const onKey = (e: KeyboardEvent) => {
       const h = hot.current;
       if (!h.oneClick || e.metaKey || e.ctrlKey || e.altKey) return;
-      if ((e.target as HTMLElement)?.closest("input, textarea, select")) return;
-      const k = e.key.toLowerCase();
-      if (k === "b") h.market("buy");
-      else if (k === "s") h.market("sell");
-      else if (k === "x" && h.pos) h.onClose(h.pos, 1);
-      else if (k === "h" && h.pos) h.onClose(h.pos, 0.5);
+      if (e.target instanceof Element && e.target.closest("input, textarea, select")) return;
+      // По физической клавише (e.code): работает и в русской раскладке.
+      const k = e.code;
+      if (k === "KeyB") h.market("buy");
+      else if (k === "KeyS") h.market("sell");
+      else if (k === "KeyX" && h.pos) h.onClose(h.pos, 1);
+      else if (k === "KeyH" && h.pos) h.onClose(h.pos, 0.5);
       else return;
       e.preventDefault();
     };
@@ -311,20 +351,48 @@ export function Scalp({
   const chg = shown && shown.o ? ((shown.c - shown.o) / shown.o) * 100 : null;
   const ladder = useMemo(() => {
     if (!book) return null;
-    const tick = bookTick(book);
+    const base = bookTick(book);
+    const tick = base ? base * group : null;
     const r = tickLadder(book, tick, 12, myOrders.flatMap((o) => (o.price ? [o.price] : [])));
     const asks = [...r.asks].reverse();
     const max = Math.max(...asks.map((l) => l.size), ...r.bids.map((l) => l.size), 1e-12);
     return { asks, bids: r.bids, max, tick };
-  }, [book, myOrders]);
-  // Строка лесенки: своя лимитка на тике — подсветка и снятие кликом; иначе — новая лимитка.
+  }, [book, myOrders, group]);
+  // TP/SL на позицию; на live — через подтверждение, как и ордера.
+  const tpsl = (p: LivePos, leg: "tp" | "sl", px: number | null) => {
+    if (!ok(p.demo, `${p.side} ${p.symbol}: ${leg.toUpperCase()} ${px == null ? "×" : fmt(px)}`)) return;
+    send({ type: "tpsl", keyId: p.keyId, confirmLive: !p.demo, venue: p.venue, kind: p.kind, symbol: p.symbol, side: p.side,
+      ...(px == null ? { clear: leg } : { [leg]: px }) });
+  };
+  const dragged = useRef<LiveOrder[] | null>(null);
+  // Строка лесенки: своя лимитка — подсветка, клик снимает, перетаскивание переносит цену;
+  // Shift+клик — TP/SL позиции по этой цене; иначе — новая лимитка.
   const rung = (l: Rung, side: "ask" | "bid") => {
-    const mine = ladder ? myOrders.filter((o) => o.price && onRung(l, o.price, ladder.tick)) : [];
+    const mine = ladder ? myOrders.filter((o) => o.price && onRung(l, o.price, ladder.tick, o.side)) : [];
+    const pos = myPos[0];
     return (
       <button key={`${side}${l.price}`} type="button" className={`lv ${side}${mine.length ? " mine" : ""}`}
         disabled={!key && !mine.length}
-        title={mine.length ? t("cancelHit") : undefined}
-        onClick={() => (mine.length ? mine.forEach(onCancel) : limit(side === "ask" ? "sell" : "buy", l.price))}>
+        title={mine.length ? t("cancelHit") : pos ? t("tpslHint") : undefined}
+        draggable={mine.length > 0}
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", "order");
+          dragged.current = mine;
+        }}
+        onDragEnd={() => (dragged.current = null)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const rows = dragged.current;
+          dragged.current = null;
+          rows?.forEach((o) => o.price !== l.price && onAmend(o, l.price));
+        }}
+        onClick={(e) => {
+          if (mine.length) return mine.forEach(onCancel);
+          if (e.shiftKey && pos?.entry) return tpsl(pos, (pos.side === "long") === (l.price > pos.entry) ? "tp" : "sl", l.price);
+          limit(side === "ask" ? "sell" : "buy", l.price);
+        }}>
         <i style={{ width: `${(l.size / (ladder?.max || 1)) * 100}%` }} />
         <span>{tickText(l.price, ladder?.tick ?? null) ?? fmt(l.price)}</span><span>{mine.length ? `× ${mine.map((o) => o.side).join("/")}` : l.size > 0 ? qty(l.size) : ""}</span>
       </button>
@@ -431,6 +499,9 @@ export function Scalp({
             ) : (
               <span className="muted">{t("chNoKey", { venue: VENUE_LABEL[target.venue] })}</span>
             )}
+            <button type="button" className={`mini${sound ? " on" : ""}`} title={t(sound ? "soundOn" : "soundOff")} onClick={() => onSound(!sound)}>
+              {sound ? "🔔" : "🔕"}
+            </button>
             <label className={`one-click${oneClick ? " on" : ""}`} title={t("oneClickHint")}>
               <input type="checkbox" checked={oneClick} onChange={toggleOneClick} /> {t("oneClick")}
             </label>
@@ -468,10 +539,7 @@ export function Scalp({
                 <b className={p.side === "long" ? "pos" : "neg"}>{p.side}</b>
                 <span>{p.size}</span>
                 {p.entry != null && <span className="muted">@ {fmt(p.entry)}</span>}
-                {(() => {
-                  const pnl = livePnl(p, book) ?? p.pnl;
-                  return <b className={(pnl || 0) >= 0 ? "pos" : "neg"}>{pnl == null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`}</b>;
-                })()}
+                <PnlText row={p} book={book} />
               </div>
               {p.liq && p.liq > 0 ? <div className="muted">liq {fmt(p.liq)}{p.leverage ? ` · ${p.leverage}x` : ""}</div> : null}
               <div className="pos-close">
@@ -484,6 +552,7 @@ export function Scalp({
               <button type="button" className="ghost wide" disabled={busy || !exitPx} title={t("chCloseLimitHint")} onClick={() => onClose(p, 1, exitPx)}>
                 {t("chCloseLimit")} {exitPx ? fmt(exitPx) : ""}
               </button>
+              {p.kind === "perp" && <TpSl p={p} onSet={(leg, px) => tpsl(p, leg, px)} onClear={(leg) => tpsl(p, leg, null)} />}
             </section>
           );
         })}
@@ -509,7 +578,7 @@ export function Scalp({
           {!ladder && <span className="muted">{t("chLoading")}</span>}
           {ladder?.asks.map((l) => rung(l, "ask"))}
           {ladder && bestBid && bestAsk && (
-            <div className="lv mid">{t("chSpread")} {fmt(bestAsk - bestBid)} · {(((bestAsk - bestBid) / bestBid) * 100).toFixed(4)}%</div>
+            <div className="lv mid"><GroupPick value={group} onChange={onGroup} /> {t("chSpread")} {fmt(bestAsk - bestBid)} · {(((bestAsk - bestBid) / bestBid) * 100).toFixed(4)}%</div>
           )}
           {ladder?.bids.map((l) => rung(l, "bid"))}
         </section>

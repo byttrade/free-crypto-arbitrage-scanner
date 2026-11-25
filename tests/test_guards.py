@@ -628,3 +628,69 @@ def test_close_and_market_resync_position(monkeypatch):
         await asyncio.sleep(0.05)
     asyncio.run(run())
     assert synced == ["k", "k"]
+
+
+def test_tpsl_set_modify_clear(monkeypatch):
+    # TP/SL: новый — set_tp_sl, уже стоящий — modify_tp_sl (без окна без стопа), снятие — cancel_tp_sl.
+    from types import SimpleNamespace as NS
+    pos = NS(size=2.0, side="long", contracts=None, entry_price=100.0)
+    trade, sent, acks, base = _close_setup(monkeypatch, pos)
+    calls, live = [], []
+
+    class Ex:
+        async def tp_sl_orders(self, symbol, side=None):
+            return list(live)
+
+        async def set_tp_sl(self, symbol, **k):
+            calls.append(("set", k))
+            for kind, px in (("take_profit", k.get("take_profit")), ("stop_loss", k.get("stop_loss"))):
+                if px:
+                    live.append(NS(id=kind, kind=kind, position_side=k["side"], state="open",
+                                   take_profit=px if kind == "take_profit" else None,
+                                   stop_loss=px if kind == "stop_loss" else None))
+            return []
+
+        async def modify_tp_sl(self, symbol, order_id, **k):
+            calls.append(("modify", order_id, k))
+
+        async def cancel_tp_sl(self, symbol, **k):
+            calls.append(("cancel", k))
+            live.clear()
+            return 1
+    s = trade._sessions[("k", "perp")]
+    s.ex = Ex()
+    msg = {**base, "type": "tpsl", "side": "long"}
+    asyncio.run(trade.handle(None, {**msg, "tp": 110, "sl": 95}))
+    assert calls[-1] == ("set", {"take_profit": 110.0, "stop_loss": 95.0, "side": "long"}) and acks[-1][0]
+    assert s.tpsl[("X/USDT:USDT", "long")] == {"tp": 110.0, "tpId": "take_profit", "sl": 95.0, "slId": "stop_loss"}
+    asyncio.run(trade.handle(None, {**msg, "sl": 97}))
+    assert calls[-1] == ("modify", "stop_loss", {"stop_loss": 97.0}) and acks[-1][0]
+    asyncio.run(trade.handle(None, {**msg, "clear": "tp"}))
+    assert calls[-1] == ("cancel", {"side": "long", "kind": "take_profit"}) and acks[-1][0]
+    asyncio.run(trade.handle(None, {**msg}))
+    assert acks[-1] == (False, "укажите цену TP или SL")
+
+
+def test_fill_event_once(monkeypatch):
+    # Исполненный ордер (closed, filled > 0) — одно событие fill; отмена и повторное обновление — нет.
+    from types import SimpleNamespace as NS
+    from arbdesk import trade
+    sent = []
+
+    async def bc(msg):
+        sent.append(msg)
+    import arbdesk.main as main
+    monkeypatch.setattr(main, "broadcast", bc)
+    monkeypatch.setattr(trade, "push_orders", lambda s: asyncio.sleep(0))
+    s = trade.Session({"id": "k", "venue": "bitget", "demo": True}, "perp", None, None, None)
+
+    async def run():
+        o = NS(id="1", status="closed", filled=5.0, average=0.1, price=None, side="buy", symbol="D/USDT:USDT")
+        trade._on_order(s, o)
+        trade._on_order(s, o)
+        trade._on_order(s, NS(id="2", status="canceled", filled=0.0, average=None, price=0.1, side="buy", symbol="D/USDT:USDT"))
+        await asyncio.sleep(0.01)
+    asyncio.run(run())
+    fills = [m for m in sent if m["type"] == "fill"]
+    assert fills == [{"type": "fill", "keyId": "k", "venue": "bitget", "kind": "perp", "demo": True,
+                      "symbol": "D/USDT:USDT", "side": "buy", "price": 0.1, "size": 5.0}]

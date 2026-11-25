@@ -1448,3 +1448,15 @@ button.lv:hover:not(:disabled) { background: #1a222c; transform: none; }
 .spread-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 0; font-size: 11px; color: var(--muted); }
 .spread-facts b { font-family: var(--mono); font-weight: 650; color: var(--text); }
 .spread-facts b.pos { color: var(--bid); } .spread-facts b.neg { color: var(--ask); }
+/* список ордеров и позиций: заголовок со счётчиками сворачивает его */
+.blot-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #111113; font-size: 11px; }
+.blot-head .link { color: var(--muted); }
+.blotter.closed { max-height: none; overflow: visible; }
+/* шаг стакана в тиках */
+.group-pick { margin-right: 6px; padding: 0 2px; font: inherit; font-size: 11px; background: #0c1016; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; }
+/* тейк и стоп позиции */
+.tpsl { display: grid; gap: 3px; margin-top: 6px; }
+.tpsl-row { display: grid; grid-template-columns: 24px 1fr auto auto; gap: 4px; align-items: center; font-size: 11px; }
+.tpsl-row.tp b { color: var(--bid); } .tpsl-row.sl b { color: var(--ask); }
+.tpsl-row input { min-width: 0; padding: 2px 4px; background: #0c1016; color: inherit; border: 1px solid var(--line); font-family: var(--mono); }
+.ladder-row[draggable="true"], .lv[draggable="true"] { cursor: grab; }

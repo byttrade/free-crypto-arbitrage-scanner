@@ -12,7 +12,7 @@ import asyncio
 from bytx import create_exchange, errors
 
 from . import integrity, vault
-from .market import proxy_for
+from .market import proxy_for, taker
 
 _lock = asyncio.Lock()
 _sessions: dict[tuple[str, str], "Session"] = {}
@@ -28,6 +28,9 @@ class Session:
         self.orders = orders
         self.positions = positions
         self.guard = None  # integrity.Guard, created on the first order
+        self.tpsl: dict[tuple[str, str], dict] = {}  # (символ, сторона позиции) → {"tp", "tpId", "sl", "slId"}
+        self.tpsl_seen: set[str] = set()  # символы, по которым TP/SL уже читали с биржи
+        self.filled: set[str] = set()  # id ордеров, об исполнении которых уже сообщили
 
 
 def kick() -> None:
@@ -78,11 +81,14 @@ async def _start(row: dict, kind: str) -> None:
     session = Session(row, kind, ex, orders, positions)
     _sessions[(row["id"], kind)] = session
     try:
-        orders.on_update(lambda _order: asyncio.create_task(push_orders(session)))
+        orders.on_update(lambda order: _on_order(session, order))
         await orders.start()
         if positions is not None:
-            positions.on_update(lambda _pos: asyncio.create_task(push_positions(session)))
+            positions.on_update(lambda pos: _on_position(session, pos))
             await positions.start()
+            for pos in positions.positions:
+                if pos.size:
+                    await _load_tpsl(session, pos.symbol)
         await push_orders(session)
         await push_positions(session)
     except Exception as exc:
@@ -135,7 +141,60 @@ def _order_row(session: Session, order) -> dict:
     }
 
 
+def _on_order(session: Session, order) -> None:
+    asyncio.create_task(push_orders(session))
+    # Исполнение — по статусу из трекера: исчезновение из списка открытых бывает и при отмене.
+    if order.status == "closed" and (order.filled or 0) > 0 and order.id not in session.filled:
+        if len(session.filled) > 5000:
+            session.filled.clear()
+        session.filled.add(order.id)
+        asyncio.create_task(_push_fill(session, order))
+
+
+async def _push_fill(session: Session, order) -> None:
+    from .main import broadcast
+
+    await broadcast({"type": "fill", "keyId": session.key_id, "venue": session.venue, "kind": session.kind,
+                     "demo": session.demo, "symbol": order.symbol, "side": order.side,
+                     "price": order.average or order.price, "size": order.filled})
+
+
+def _on_position(session: Session, pos) -> None:
+    asyncio.create_task(push_positions(session))
+    # Новая позиция (например, исполнилась лимитка) — один раз читаем её TP/SL с биржи.
+    if getattr(pos, "size", 0) and pos.symbol not in session.tpsl_seen:
+        session.tpsl_seen.add(pos.symbol)
+        asyncio.create_task(_refresh_tpsl(session, pos.symbol))
+
+
+async def _load_tpsl(session: Session, symbol: str) -> None:
+    """Активные TP/SL символа с биржи → session.tpsl. Ошибку чтения не роняем: просто не покажем."""
+    session.tpsl_seen.add(symbol)
+    try:
+        rows = await session.ex.tp_sl_orders(symbol)
+    except Exception:
+        return
+    fresh: dict[tuple[str, str], dict] = {}
+    for o in rows:
+        if getattr(o, "state", None) not in (None, "open") or not getattr(o, "position_side", None):
+            continue
+        leg = fresh.setdefault((symbol, o.position_side), {})
+        if o.kind in ("take_profit", "tp_sl") and o.take_profit:
+            leg.update(tp=float(o.take_profit), tpId=o.id)
+        if o.kind in ("stop_loss", "tp_sl") and o.stop_loss:
+            leg.update(sl=float(o.stop_loss), slId=o.id)
+    for key in [k for k in session.tpsl if k[0] == symbol]:
+        session.tpsl.pop(key)
+    session.tpsl.update(fresh)
+
+
+async def _refresh_tpsl(session: Session, symbol: str) -> None:
+    await _load_tpsl(session, symbol)
+    await push_positions(session)
+
+
 def _pos_row(session: Session, pos) -> dict:
+    prot = session.tpsl.get((pos.symbol, pos.side), {})
     return {
         "keyId": session.key_id,
         "venue": session.venue,
@@ -148,6 +207,10 @@ def _pos_row(session: Session, pos) -> dict:
         "pnl": pos.unrealized_pnl,
         "leverage": pos.leverage,
         "liq": pos.liquidation_price,
+        "mark": getattr(pos, "mark_price", None),
+        "taker": taker(session.venue, session.kind, pos.symbol),
+        "tp": prot.get("tp"),
+        "sl": prot.get("sl"),
     }
 
 
@@ -251,7 +314,7 @@ async def handle(socket, msg: dict) -> None:
             at = "market" if market else order.price
             await _ack(socket, True, f"{mark}: {order.side} {order.symbol} @ {at}")
             if market:
-                asyncio.create_task(_settle(session))
+                asyncio.create_task(_settle(session, symbol))
         elif action == "amend":
             order = await ex.ws_amend_order(
                 symbol,
@@ -266,6 +329,9 @@ async def handle(socket, msg: dict) -> None:
             order = await ex.ws_cancel_order(symbol, str(msg.get("orderId") or ""))
             _remember(session, order)
             await _ack(socket, True, "лимитка снята")
+        elif action == "tpsl":
+            await _tpsl(socket, session, symbol, msg)
+            return
         elif action == "close":
             if session.positions is None:
                 await _ack(socket, False, "позиции только на перпах")
@@ -295,7 +361,7 @@ async def handle(socket, msg: dict) -> None:
             _remember(session, order)
             pct = f"{part * 100:g}%"
             await _ack(socket, True, f"закрытие {pct} отправлено" + (f" лимиткой @ {order.price}" if how["type"] == "limit" else ""))
-            asyncio.create_task(_settle(session))
+            asyncio.create_task(_settle(session, symbol))
         else:
             return
         await push_orders(session)
@@ -316,8 +382,49 @@ async def handle(socket, msg: dict) -> None:
         await _ack(socket, False, str(exc).split("\n")[0][:180])
 
 
-async def _settle(session: Session) -> None:
+async def _tpsl(socket, session: Session, symbol: str, msg: dict) -> None:
+    """Тейк и стоп на позицию: новый — set_tp_sl, стоящий — modify_tp_sl (биржа двигает без окна без стопа)."""
+    side = msg.get("side")
+    if session.positions is None or side not in ("long", "short"):
+        await _ack(socket, False, "TP/SL только на позицию перпа")
+        return
+    pos = session.positions.get(symbol, side)
+    if pos is None or not pos.size:
+        await _ack(socket, False, "позиции нет")
+        return
+    ex = session.ex
+    clear = msg.get("clear")
+    if clear in ("tp", "sl"):
+        await ex.cancel_tp_sl(symbol, side=side, kind="take_profit" if clear == "tp" else "stop_loss")
+        text = f"{clear.upper()} снят"
+    else:
+        want = {"tp": _num(msg.get("tp")), "sl": _num(msg.get("sl"))}
+        if not any(want.values()):
+            await _ack(socket, False, "укажите цену TP или SL")
+            return
+        await _load_tpsl(session, symbol)
+        cur = session.tpsl.get((symbol, side), {})
+        new = {}
+        for leg, px in want.items():
+            if not px:
+                continue
+            arg = "take_profit" if leg == "tp" else "stop_loss"
+            if cur.get(f"{leg}Id"):
+                await ex.modify_tp_sl(symbol, cur[f"{leg}Id"], **{arg: px})
+            else:
+                new[arg] = px
+        if new:
+            await ex.set_tp_sl(symbol, **new, side=side)
+        text = " · ".join(f"{k.upper()} {v:g}" for k, v in want.items() if v)
+    await _load_tpsl(session, symbol)
+    await _ack(socket, True, text)
+    await push_positions(session)
+
+
+async def _settle(session: Session, symbol: str = "") -> None:
     await asyncio.sleep(SETTLE_SEC)
+    if symbol:  # TP/SL по символу: после закрытия биржа их снимает или уменьшает
+        await _load_tpsl(session, symbol)
     await _reconcile(session)
 
 

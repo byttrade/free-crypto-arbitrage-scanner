@@ -1,6 +1,7 @@
 // Самопроверка сетки стакана и живого PnL: node tests/ladder.check.ts (запускает и pytest).
 import assert from "node:assert/strict";
-import { bookTick, decimals, livePnl, onRung, tickLadder, tickText } from "../web/src/ladder.ts";
+const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+import { bookTick, decimals, pnlOf, onRung, tickLadder, tickText } from "../web/src/ladder.ts";
 
 assert.equal(decimals(0.25), 2);
 assert.equal(decimals(5e-5), 5);
@@ -9,7 +10,7 @@ assert.equal(decimals(10), 0);
 
 // Сетка: дыры остаются строками, уровни внутри тика суммируются, цены без хвостов плавающей точки.
 const book = { venue: "x", symbol: "A", tick: 0.1,
-  asks: [{ price: 1.2, size: 1 }, { price: 1.5, size: 2 }, { price: 1.51, size: 3 }],
+  asks: [{ price: 1.2, size: 1 }, { price: 1.5, size: 2 }, { price: 1.49, size: 3 }],
   bids: [{ price: 1.1, size: 4 }, { price: 0.8, size: 5 }] };
 assert.equal(bookTick(book), 0.1);
 const l = tickLadder(book, 0.1, 4);
@@ -27,12 +28,16 @@ assert.equal(bookTick({ venue: "z", symbol: "C", tick: 4, asks: [{ price: 0.2, s
 // Нет шага вовсе — сырые уровни.
 assert.deepEqual(tickLadder({ asks: [{ price: 1, size: 1 }], bids: [] }, null, 3).asks.map((r) => r.price), [1]);
 
-// PnL: лонг по bid, шорт по ask.
+// PnL: лонг по bid, шорт по ask, минус taker на вход и выход; demo — по цене маркировки.
 const ob = { bids: [{ price: 99, size: 1 }], asks: [{ price: 101, size: 1 }] };
-assert.equal(livePnl({ side: "long", size: 2, entry: 100 }, ob), -2);
-assert.equal(livePnl({ side: "short", size: 2, entry: 100 }, ob), -2);
-assert.equal(livePnl({ side: "long", size: 2, entry: null }, ob), null);
-assert.equal(livePnl({ side: "long", size: 2, entry: 100 }, null), null);
+assert.equal(pnlOf({ side: "long", size: 2, entry: 100 }, ob)!.net, -2);
+assert.equal(pnlOf({ side: "short", size: 2, entry: 100 }, ob)!.net, -2);
+const f = pnlOf({ side: "long", size: 2, entry: 100, taker: 0.001 }, ob)!;
+assert.equal(f.gross, -2); near(f.fee, 0.002 * 199); near(f.net, -2 - 0.398);
+assert.equal(pnlOf({ side: "long", size: 2, entry: 100, demo: true, mark: 105 }, ob)!.gross, 10);
+assert.equal(pnlOf({ side: "long", size: 2, entry: 100, demo: true, pnl: 3 }, ob)!.gross, 3);
+assert.equal(pnlOf({ side: "long", size: 2, entry: null }, ob), null);
+assert.equal(pnlOf({ side: "long", size: 2, entry: 100 }, null), null);
 assert.equal(tickText(0.055833, 0.000001), "0.055833");
 assert.equal(tickText(97000.1, 0.1), "97,000.1");
 // Своя лимитка дальше n тиков — сетка растягивается до неё (и не дальше 200 лишних тиков).
@@ -40,4 +45,10 @@ const far = tickLadder(book, 0.1, 4, [2.0, 0.4, 1.15]);
 assert.equal(far.asks.length, 9); assert.equal(far.asks.at(-1)!.price, 2);
 assert.equal(far.bids.length, 8); assert.equal(far.bids.at(-1)!.price, 0.4);
 assert.equal(tickLadder(book, 0.1, 4, [1000]).asks.length, 204);
+// Группировка по 5 тиков: bid вниз, ask вверх, объёмы суммируются; ордер — на своей ячейке по стороне.
+const g = tickLadder({ asks: [{ price: 1.21, size: 1 }, { price: 1.24, size: 2 }, { price: 1.26, size: 4 }],
+  bids: [{ price: 1.19, size: 1 }, { price: 1.15, size: 2 }] }, 0.05, 2);
+assert.deepEqual(g.asks.map((r) => [r.price, r.size]), [[1.25, 3], [1.3, 4]]);
+assert.deepEqual(g.bids.map((r) => [r.price, r.size]), [[1.15, 3], [1.1, 0]]);
+assert.ok(onRung(g.bids[0], 1.18, 0.05, "buy") && onRung(g.asks[0], 1.22, 0.05, "sell"));
 console.log("ok");

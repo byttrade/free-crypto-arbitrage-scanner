@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useI18n, type Msg } from "./i18n";
-import { bookTick, onRung, tickLadder, tickText } from "./ladder";
-import type { BookLevel, LiveOrder, OrderBook, TapeTrade, VenueId } from "./types";
+import { bookTick, onRung, pnlOf, tickLadder, tickText } from "./ladder";
+import type { BookLevel, LiveOrder, LivePos, OrderBook, TapeTrade, VenueId } from "./types";
 import { VENUE_LABEL } from "./types";
 
 export type LegPick = {
@@ -16,7 +16,31 @@ export type LegPick = {
   quoteCcy?: "USDT" | "USD";
 };
 
+export const pnlText = (n: number | null | undefined) => (n == null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}`);
+
+/** PnL позиции за вычетом taker на вход и выход; в подсказке — до комиссий, комиссии и цена выхода. */
+export function PnlText({ row, book, className = "" }: { row: LivePos; book: OrderBook | null | undefined; className?: string }) {
+  const { t } = useI18n();
+  const p = pnlOf(row, book);
+  const title = p
+    ? `${t("pnlHint", { gross: pnlText(p.gross), fee: p.fee.toFixed(2), px: price(p.px) })}${row.demo ? `\n${t("pnlDemo")}` : ""}`
+    : undefined;
+  return <b className={`${className} ${(p?.net ?? 0) >= 0 ? "pos" : "neg"}`} title={title}>{pnlText(p?.net)}</b>;
+}
+
 export const QUOTE_CHIPS = [10, 25, 50, 100, 250, 500, 1000];
+export const GROUPS = [1, 5, 10, 50];
+
+/** Шаг стакана в тиках: на рынках с мелким тиком (HTX) стакан без группировки почти пустой. */
+export function GroupPick({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  const { t } = useI18n();
+  return (
+    <select className="group-pick" value={value} title={t("groupHint")} aria-label={t("groupHint")}
+      onChange={(e) => onChange(Number(e.target.value))}>
+      {GROUPS.map((g) => <option key={g} value={g}>×{g}</option>)}
+    </select>
+  );
+}
 
 export function Venue({ id }: { id: string }) {
   const name = VENUE_LABEL[id as VenueId] || id;
@@ -68,6 +92,8 @@ function Row({
   onHint,
   onPick,
   onCancel,
+  onDragOwn,
+  onDropAt,
 }: {
   level: BookLevel;
   max: number;
@@ -79,6 +105,8 @@ function Row({
   onHint: (text: string) => void;
   onPick: (level: BookLevel, side: "ask" | "bid") => void;
   onCancel?: (row: LiveOrder) => void;
+  onDragOwn?: (rows: LiveOrder[] | null) => void;
+  onDropAt?: (level: BookLevel) => void;
 }) {
   const vol = <span className="vol">{level.size > 0 ? size(level.size) : ""}</span>;
   const px = <span className="px">{tickText(level.price, tick) ?? price(level.price)}</span>;
@@ -96,6 +124,18 @@ function Row({
       onMouseEnter={() => onHint(text)}
       onFocus={() => onHint(text)}
       onClick={() => (own ? mine.forEach((o) => onCancel(o)) : onPick(level, side))}
+      draggable={!!own && !!onDropAt}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", "order");
+        onDragOwn?.(mine);
+      }}
+      onDragEnd={() => onDragOwn?.(null)}
+      onDragOver={(e) => onDropAt && e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDropAt?.(level);
+      }}
     >
       <div className="bar" style={{ "--w": level.size > 0 ? Math.max(0.06, level.size / max) : 0 } as React.CSSProperties} />
       {role === "buy" ? (
@@ -133,6 +173,9 @@ export function Book({
   freeUsdt,
   orders = [],
   onCancel,
+  onAmend,
+  group = 1,
+  onGroup,
 }: {
   book: OrderBook | null;
   role: "buy" | "sell";
@@ -148,15 +191,26 @@ export function Book({
   freeUsdt?: number | null;
   orders?: LiveOrder[];
   onCancel?: (row: LiveOrder) => void;
+  onAmend?: (row: LiveOrder, price: number) => void;
+  group?: number;
+  onGroup?: (n: number) => void;
 }) {
   // Фиксированная сетка тиков: пустой тик остаётся строкой, строки не прыгают на каждом апдейте.
   // Своя дальняя лимитка растягивает сетку — она всегда видна и снимается кликом.
   const legOrders = orders.filter((o) => o.venue === venue && o.symbol === symbol && o.kind === (kind || "perp") && o.price);
-  const tick = book ? bookTick(book) : null;
+  const base = book ? bookTick(book) : null;
+  const tick = base ? base * group : null; // шаг строки: тик × группировка
   const rungs = book ? tickLadder(book, tick, 14, legOrders.map((o) => o.price!)) : { asks: [], bids: [] };
   const asks = [...rungs.asks].reverse();
   const bids = rungs.bids;
-  const mineAt = (r: (typeof bids)[number]) => legOrders.filter((o) => onRung(r, o.price!, tick));
+  const mineAt = (r: (typeof bids)[number]) => legOrders.filter((o) => onRung(r, o.price!, tick, o.side));
+  // Перетаскивание своей лимитки на другую строку — перенос цены (ws_amend_order), без отмены и новой постановки.
+  const dragged = useRef<LiveOrder[] | null>(null);
+  const dropAt = (level: BookLevel) => {
+    const rows = dragged.current;
+    dragged.current = null;
+    rows?.forEach((o) => o.price !== level.price && onAmend?.(o, level.price));
+  };
   const max = Math.max(1, ...asks.map((l) => l.size), ...bids.map((l) => l.size));
   const bestAsk = book?.asks[0];
   const bestBid = book?.bids[0];
@@ -200,6 +254,7 @@ export function Book({
           <span>{name}</span>
         </div>
         <div className="sym">
+          {onGroup && book && <GroupPick value={group} onChange={onGroup} />}
           {symbol || t("pickLink")}
           {age != null && <em>{age < 1 ? "live" : `${age.toFixed(0)}${t("sec")}`}</em>}
         </div>
@@ -266,6 +321,8 @@ export function Book({
             venue={name}
             mine={mineAt(l)}
             tick={tick}
+            onDragOwn={(rows) => (dragged.current = rows)}
+            onDropAt={onAmend ? dropAt : undefined}
             onHint={setHint}
             onPick={pick}
             onCancel={onCancel}
@@ -285,6 +342,8 @@ export function Book({
             venue={name}
             mine={mineAt(l)}
             tick={tick}
+            onDragOwn={(rows) => (dragged.current = rows)}
+            onDropAt={onAmend ? dropAt : undefined}
             onHint={setHint}
             onPick={pick}
             onCancel={onCancel}

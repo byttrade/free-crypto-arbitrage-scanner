@@ -445,7 +445,7 @@ async def ws(socket: WebSocket):
                 mine, total = view.spreads(build_cross(), v)
                 await socket.send_text(json.dumps({"type": "spreads", "rows": mine, "total": total}, default=float))
                 await socket.send_text(json.dumps({"type": "funding", "rows": view.funding(build_funding(), v)}, default=float))
-            elif msg.get("type") in ("place", "amend", "cancel", "close"):
+            elif msg.get("type") in ("place", "amend", "cancel", "close", "tpsl"):
                 asyncio.create_task(_trade(socket, msg))
             elif msg.get("type") in ("pair_open", "pair_fix", "pair_close", "pair_dismiss"):
                 asyncio.create_task(_pair(socket, msg))

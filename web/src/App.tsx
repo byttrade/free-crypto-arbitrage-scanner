@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { MiniCharts, SpreadChart } from "./Chart";
-import { Book, Tape, Venue, price, type LegPick } from "./Dom";
-import { livePnl } from "./ladder";
+import { Book, PnlText, Tape, Venue, price, type LegPick } from "./Dom";
 import { srvText, useI18n } from "./i18n";
 import { Diary } from "./Diary";
 import { Updates } from "./Updates";
@@ -326,7 +325,24 @@ export function CloseButtons({ row, busy, onClose }: { row: LivePos; busy: boole
   );
 }
 
-const pnlText = (n: number | null | undefined) => (n == null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}`);
+
+/** Короткий сигнал об исполнении (WebAudio, без файлов). */
+function beep() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.2);
+    osc.onended = () => void ctx.close();
+  } catch {
+    /* звук недоступен — остаётся уведомление в панели */
+  }
+}
 
 /** Позиция по открытому стакану: полоса фиксированной высоты, PnL по лучшей встречной цене этого стакана. */
 function BookPos({ rows, book, closing, onClose }: {
@@ -340,13 +356,13 @@ function BookPos({ rows, book, closing, onClose }: {
     <div className="book-pos">
       {!rows.length && <span className="muted">{t("noPosHere")}</span>}
       {rows.map((row) => {
-        const pnl = livePnl(row, book) ?? row.pnl;
         return (
           <div className="book-pos-row" key={`${row.keyId}|${row.side}`}>
             <b className={row.side === "long" ? "pos" : "neg"}>{row.side}</b>
             <span>{row.size}</span>
             {row.entry != null && <span className="muted">@ {price(row.entry)}</span>}
-            <b className={`pnl ${(pnl || 0) >= 0 ? "pos" : "neg"}`}>{pnlText(pnl)}</b>
+            {(row.tp || row.sl) && <span className="muted">{row.tp ? `TP ${price(row.tp)}` : ""} {row.sl ? `SL ${price(row.sl)}` : ""}</span>}
+            <PnlText row={row} book={book} className="pnl" />
             <CloseButtons row={row} busy={closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`)} onClose={onClose} />
           </div>
         );
@@ -624,6 +640,69 @@ export function App() {
   const [chartH, setChartH] = useState(220);
   const [rightW, setRightW] = useState(() => Math.round(window.innerWidth * 0.5));
   const [quote, setQuote] = useState(100);
+  // Шаг стакана в тиках по рынку (venue|symbol), помним в браузере.
+  const [groups, setGroups] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("arb.group") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const setGroup = (key: string, n: number) =>
+    setGroups((g) => {
+      const next = { ...g, [key]: n };
+      try {
+        localStorage.setItem("arb.group", JSON.stringify(next));
+      } catch {
+        /* приватное окно — на сеанс */
+      }
+      return next;
+    });
+  const [sound, setSoundState] = useState(() => {
+    try {
+      return localStorage.getItem("arb.sound") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setSound = (on: boolean) => {
+    setSoundState(on);
+    try {
+      localStorage.setItem("arb.sound", on ? "1" : "0");
+    } catch {
+      /* на сеанс */
+    }
+    if (on && typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission();
+  };
+  const [blotOpen, setBlotOpenState] = useState(() => {
+    try {
+      return localStorage.getItem("arb.blot") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setBlotOpen = (on: boolean) => {
+    setBlotOpenState(on);
+    try {
+      localStorage.setItem("arb.blot", on ? "1" : "0");
+    } catch {
+      /* на сеанс */
+    }
+  };
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
+  const tRef = useRef(t);
+  tRef.current = t;
+  const positionsRef = useRef<LivePos[]>([]);
+  // Сигнал и уведомление: исполнение ордера, закрытие позиции.
+  const ding = (text: string) => {
+    setNotice(text);
+    if (!soundRef.current) return;
+    beep();
+    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification("ArbDesk", { body: text, tag: "fill" });
+    }
+  };
   const [quoteCcy, setQuoteCcy] = useState<"USDT" | "USD">("USDT");
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const onKeys = useMemo(() => (rows: KeyRow[]) => setKeys(rows), []);
@@ -705,6 +784,8 @@ export function App() {
           research?: { status: string };
           text?: string;
           ok?: boolean;
+          side?: string;
+          price?: number | null;
           kind?: string;
           keyId?: string;
         };
@@ -736,6 +817,11 @@ export function App() {
         if (msg.type === "positions" && msg.keyId && msg.kind) {
           posSeen.current.add(`${msg.keyId}|${msg.kind}`);
           const rows = (msg.rows || []) as LivePos[];
+          const before = positionsRef.current.filter((p) => p.keyId === msg.keyId && p.kind === msg.kind && p.size > 0);
+          before
+            .filter((p) => !rows.some((r) => r.symbol === p.symbol && r.side === p.side && r.size > 0))
+            .forEach((p) => ding(tRef.current("posClosedNote", { side: p.side || "", symbol: p.symbol })));
+          positionsRef.current = replaceSlice(positionsRef.current, msg.keyId!, msg.kind!, rows);
           setPositions((prev) => replaceSlice(prev, msg.keyId!, msg.kind!, rows));
           const changed = [...closeWait.current].filter(([k, size]) => {
             const [keyId, symbol, side] = k.slice(4).split("|");
@@ -753,6 +839,9 @@ export function App() {
           } else setClosing((c) => new Set([...c].filter((k) => closeWait.current.has(k))));
         }
         if (msg.type === "order_ack" && msg.text) setNotice(msg.text);
+        if (msg.type === "fill" && msg.symbol) {
+          ding(tRef.current("filledNote", { side: msg.side || "", symbol: msg.symbol, px: msg.price != null ? price(msg.price) : "mkt" }));
+        }
         if (msg.type === "journal") setJrows((msg.rows as JRow[]) || []);
         if (msg.type === "alert" && msg.alert) {
           setAlerts((a) => [...a.slice(-80), msg.alert!]);
@@ -1200,6 +1289,11 @@ export function App() {
           liveOk={liveOk}
           onClose={closePos}
           onCancel={cancelOrder}
+          onAmend={amendOrder}
+          group={groups[`${chartTarget.venue}|${chartTarget.symbol}`] || 1}
+          onGroup={(n) => setGroup(`${chartTarget.venue}|${chartTarget.symbol}`, n)}
+          sound={sound}
+          onSound={setSound}
         />
       ) : (
       <div className="main">
@@ -1598,13 +1692,21 @@ export function App() {
               />
             )}
             {(orders.length > 0 || otherPos.length > 0) && (
-              <div className="blotter">
-                {orders.length > 0 && <span className="muted">{t("blotOrders")}</span>}
-                {orders.map((row) => (
+              <div className={`blotter${blotOpen ? "" : " closed"}`}>
+                <div className="blot-head">
+                  <button type="button" className="link" onClick={() => setBlotOpen(!blotOpen)} title={blotOpen ? t("blotHide") : t("blotShow")}>
+                    {blotOpen ? "▾" : "▸"} {t("blotOrders")} {orders.length} · {t("blotPos")} {otherPos.length}
+                  </button>
+                  <button type="button" className={`mini${sound ? " on" : ""}`} title={t(sound ? "soundOn" : "soundOff")} onClick={() => setSound(!sound)}>
+                    {sound ? "🔔" : "🔕"}
+                  </button>
+                </div>
+                {blotOpen && orders.length > 0 && <span className="muted">{t("blotOrders")}</span>}
+                {blotOpen && orders.map((row) => (
                   <OrderEdit key={`${row.venue}|${row.id}`} row={row} onAmend={amendOrder} onCancel={cancelOrder} />
                 ))}
-                {otherPos.length > 0 && <span className="muted">{t("blotPos")}</span>}
-                {otherPos.map((row) => (
+                {blotOpen && otherPos.length > 0 && <span className="muted">{t("blotPos")}</span>}
+                {blotOpen && otherPos.map((row) => (
                   <div className="blot-row" key={`${row.venue}|${row.symbol}|${row.side}`}>
                     <b>{row.demo ? "demo" : "live"}</b>
                     <Venue id={row.venue as VenueId} />
@@ -1615,10 +1717,7 @@ export function App() {
                     <span className={row.side === "long" ? "pos" : "neg"}>{row.side}</span>
                     <span>{row.size}</span>
                     {row.entry != null && <span className="muted">@ {price(row.entry)}</span>}
-                    {(() => {
-                      const pnl = livePnl(row, books[`${row.venue}|${row.symbol}`]) ?? row.pnl;
-                      return <span className={(pnl || 0) >= 0 ? "pos" : "neg"}>{pnlText(pnl)}</span>;
-                    })()}
+                    <PnlText row={row} book={books[`${row.venue}|${row.symbol}`]} />
                     <CloseButtons row={row} busy={closing.has(`pos:${row.keyId}|${row.symbol}|${row.side}`)} onClose={closePos} />
                   </div>
                 ))}
@@ -1675,6 +1774,9 @@ export function App() {
                 freeUsdt={freeUsdt(keys, watch[0]?.venue)}
                 orders={orders}
                 onCancel={cancelOrder}
+                onAmend={amendOrder}
+                group={groups[`${watch[0]?.venue}|${watch[0]?.symbol}`] || 1}
+                onGroup={(n) => watch[0] && setGroup(`${watch[0].venue}|${watch[0].symbol}`, n)}
               />
               <BookPos rows={positions.filter(atBook(0))} book={leftBook} closing={closing} onClose={closePos} />
               <Tape
@@ -1699,6 +1801,9 @@ export function App() {
                 freeUsdt={freeUsdt(keys, watch[1]?.venue)}
                 orders={orders}
                 onCancel={cancelOrder}
+                onAmend={amendOrder}
+                group={groups[`${watch[1]?.venue}|${watch[1]?.symbol}`] || 1}
+                onGroup={(n) => watch[1] && setGroup(`${watch[1].venue}|${watch[1].symbol}`, n)}
               />
               <BookPos rows={positions.filter(atBook(1))} book={rightBook} closing={closing} onClose={closePos} />
               <Tape
