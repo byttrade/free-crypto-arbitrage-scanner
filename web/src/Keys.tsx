@@ -77,7 +77,7 @@ export function Keys({ onRows }: { onRows: (rows: KeyRow[]) => void }) {
   };
 
   return (
-    <div className="wallet">
+    <div className="wallet" data-tour="keys">
       <button type="button" className={`chip ${open ? "on" : ""}`} onClick={() => setOpen((v) => !v)}>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path fill="currentColor" d="M14.5 3a5.5 5.5 0 0 0-5.4 6.6L3 15.7V21h4.4l1.3-1.3v-2.4H11l1.6-1.6A5.5 5.5 0 1 0 14.5 3zm1.3 5.4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />

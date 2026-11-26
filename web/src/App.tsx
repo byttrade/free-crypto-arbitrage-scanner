@@ -8,6 +8,7 @@ import { Logout } from "./Auth";
 import { Keys, type KeyRow } from "./Keys";
 import { Tabs } from "./Tabs";
 import { Scalp, type ChartTarget } from "./Scalp";
+import { HelpMenu, Tour, tourSeen } from "./Help";
 import type {
   AlertEvent,
   CrossSpread,
@@ -527,6 +528,7 @@ function researchText(status: string, t: ReturnType<typeof useI18n>["t"]) {
 export function App() {
   const { lang, setLang, t } = useI18n();
   const [tab, setTab] = useState<Tab>("cross");
+  const [showTour, setShowTour] = useState<string | null>(() => (tourSeen() ? null : ""));
   const [chartTarget, setChartTarget] = useState<ChartTarget>(() => {
     try {
       return { venue: "binance", symbol: "BTC/USDT:USDT", kind: "perp", base: "BTC", ...JSON.parse(localStorage.getItem("arb.target") || "{}") };
@@ -1242,6 +1244,7 @@ export function App() {
         </label>
         <div className="grow" />
         <div className="tools">
+        <HelpMenu onTour={(ch) => setShowTour(ch || "")} />
         <div className="lang">
           <button type="button" className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>
             EN
@@ -1257,7 +1260,7 @@ export function App() {
           <span>{t("quotes")}</span>
           <span className="age">{age == null ? "—" : `${age.toFixed(1)}${t("sec")}`}</span>
         </span>
-        <div className="wallet" ref={tgRef}>
+        <div className="wallet" ref={tgRef} data-tour="telegram">
           <button className={`chip ${showSettings ? "on" : ""}`} onClick={() => setShowSettings((v) => !v)}>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path fill="currentColor" d="M21.6 3.4 2.4 10.8c-1.2.5-1.2 1.1-.2 1.4l4.9 1.5 1.9 5.9c.2.7.1 1 .9.9.4 0 .6-.2.8-.4l2.7-2.6 5.4 4c1 .6 1.7.3 2-.9l3.6-16.3c.4-1.4-.5-2.1-1.8-1.6zM8.7 13.6l8.8-5.5c.4-.3.8-.1.5.2l-7.5 6.8-.3 3.2-1.5-4.7z" />
@@ -1274,6 +1277,7 @@ export function App() {
         </div>
         </div>
       </header>
+      {showTour != null && <Tour key={showTour} tab={tab} chapter={showTour || undefined} onTab={(id) => setTab(id as Tab)} onClose={() => setShowTour(null)} />}
 
       {tab === "diary" ? <Diary /> : tab === "chart" ? (
         <Scalp

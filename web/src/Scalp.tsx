@@ -507,7 +507,7 @@ export function Scalp({
             </label>
           </div>
           <div className="amount">
-            <input type="number" min={1} value={amount} onChange={(e) => setAmount(Math.max(0, Number(e.target.value)))} aria-label={t("chAmount")} />
+            <input type="number" min={1} value={amount} onChange={(e) => setAmount(Math.max(0, Number(e.target.value)))} aria-label={t("chAmount")} title={t("chAmountHint")} />
             <span className="muted">USDT</span>
           </div>
           <div className="chips">
